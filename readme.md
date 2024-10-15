@@ -1,57 +1,121 @@
-# Porter
 
-[![Latest Version on Packagist][ico-version]][link-packagist]
-[![Total Downloads][ico-downloads]][link-downloads]
-[![Build Status][ico-travis]][link-travis]
-[![StyleCI][ico-styleci]][link-styleci]
+# Porter Package Documentation
 
-This is where your description should go. Take a look at [contributing.md](contributing.md) to see a to do list.
+## Overview
+The Porter package allows for exporting, importing, and cloning of database and S3 bucket content, providing flexible ways to manage data for your Laravel applications.
 
 ## Installation
 
-Via Composer
+You can install the package via composer:
 
 ```bash
 composer require thinkneverland/porter
 ```
 
-## Usage
+### Run the install command
 
-## Change log
-
-Please see the [changelog](changelog.md) for more information on what has changed recently.
-
-## Testing
+This command will publish the configuration file, allow you to set S3 credentials and apply necessary configurations.
 
 ```bash
-composer test
+php artisan porter:install
 ```
 
-## Contributing
+During installation, you'll be prompted to provide S3 credentials for both primary and secondary S3 buckets. These will be stored in your `.env` file if not already set.
 
-Please see [contributing.md](contributing.md) for details and a todolist.
+## Configuration
 
-## Security
+The Porter package uses a configuration file located at `config/porter.php` after running the install command.
 
-If you discover any security related issues, please email author@email.com instead of using the issue tracker.
+If you wish to configure Porter manually instead of using the install command, you can do so by editing the `config/porter.php` file.
 
-## Credits
+### S3 Storage Settings
 
-- [Author Name][link-author]
-- [All Contributors][link-contributors]
+Primary and secondary S3 buckets can be configured in the `porter.php` config file:
 
-## License
+```php
+'primaryS3' => [
+    'bucket' => env('AWS_BUCKET'),
+    'region' => env('AWS_DEFAULT_REGION'),
+    'key' => env('AWS_ACCESS_KEY_ID'),
+    'secret' => env('AWS_SECRET_ACCESS_KEY'),
+    'url' => env('AWS_URL'),
+    'endpoint' => env('AWS_ENDPOINT'),
+    'use_path_style' => env('AWS_USE_PATH_STYLE_ENDPOINT', false),
+],
+'sourceS3' => [
+    'bucket' => env('AWS_SOURCE_BUCKET'),
+    'region' => env('AWS_SOURCE_REGION'),
+    'key' => env('AWS_SOURCE_ACCESS_KEY_ID'),
+    'secret' => env('AWS_SOURCE_SECRET_ACCESS_KEY'),
+    'url' => env('AWS_SOURCE__URL'),
+    'endpoint' => env('AWS_SOURCE_ENDPOINT'),
+    'use_path_style' => env('AWS_SOURCE_USE_PATH_STYLE_ENDPOINT', false),
+],
+```
 
-MIT. Please see the [license file](license.md) for more information.
+## Exporting Database
 
-[ico-version]: https://img.shields.io/packagist/v/thinkneverland/porter.svg?style=flat-square
-[ico-downloads]: https://img.shields.io/packagist/dt/thinkneverland/porter.svg?style=flat-square
-[ico-travis]: https://img.shields.io/travis/thinkneverland/porter/master.svg?style=flat-square
-[ico-styleci]: https://styleci.io/repos/12345678/shield
+```bash
+php artisan porter:export
+```
 
-[link-packagist]: https://packagist.org/packages/thinkneverland/porter
-[link-downloads]: https://packagist.org/packages/thinkneverland/porter
-[link-travis]: https://travis-ci.org/thinkneverland/porter
-[link-styleci]: https://styleci.io/repos/12345678
-[link-author]: https://github.com/thinkneverland
-[link-contributors]: ../../contributors
+This will export the database and store it either locally or on S3, based on your configuration.
+
+## Importing Database
+
+You can import a database from a file by specifying the file path:
+
+```bash
+php artisan porter:import /path/to/database.sql
+```
+
+### Example: Import from S3
+
+```bash
+php artisan porter:import s3://bucket-name/path/to/database.sql
+```
+
+### Example: Import from Local File
+
+```bash
+php artisan porter:import /local/storage/path/database.sql
+```
+
+## Cloning S3 Buckets
+
+The `clone-s3` command allows you to clone content between S3 buckets:
+
+```bash
+php artisan porter:clone-s3
+```
+
+This will clone files from the source bucket to the target bucket as defined in your configuration.
+
+## Authorization
+
+Porter allows you to define authorization criteria for actions such as export, import, and clone:
+
+```php
+'authorization' => [
+    'export' => fn($user) => $user->isAdmin(),
+    'import' => fn($user) => $user->isAdmin(),
+    'cloneS3' => fn($user) => $user->isAdmin(),
+],
+```
+
+## Model-based Configuration
+
+Instead of using the config file, randomization and keeping specific rows for tables are now done on the model level.
+
+```php
+// Inside the User model:
+// These will be randomized during Porter export/import operations.
+protected static $omittedFromPorter = ['email', 'name'];
+// This will key the rows during Porter export/import operations.
+protected static $keepForPorter = [1, 2, 3];
+// This will ensure the model is ignored during Porter export/import operations.
+public static $ignoreFromPorter = true;
+
+```
+
+You can also ignore specific tables directly in the model to prevent them from being exported.

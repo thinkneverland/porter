@@ -1,41 +1,24 @@
 {
     "name": "thinkneverland/porter",
-    "description": ":package_description",
-    "license": "MIT",
-    "authors": [
-        {
-            "name": "Author Name",
-            "email": "author@email.com",
-            "homepage": "http://author.com"
-        }
-    ],
-    "homepage": "https://github.com/thinkneverland/porter",
-    "keywords": ["Laravel", "Porter"],
+    "description": "A database export/import and S3 cloning tool for Laravel applications.",
     "require": {
-        "illuminate/support": "~8|~9|~10"
-    },
-    "require-dev": {
-        "phpunit/phpunit": "~9.0",
-        "orchestra/testbench": "~7"
+        "php": "^8.0",
+        "illuminate/support": "^8.0|^9.0|^10.0|^11.0",
+        "league/flysystem": "^3.0",
+        "league/flysystem-aws-s3-v3": "^3.0",
+        "fakerphp/faker": "^1.16",
+        "aws/aws-sdk-php": "^3.0"
     },
     "autoload": {
         "psr-4": {
-            "Thinkneverland\\Porter\\": "src/"
-        }
-    },
-    "autoload-dev": {
-        "psr-4": {
-            "Thinkneverland\\Porter\\Tests\\": "tests"
+            "ThinkNeverland\\Porter\\": "src/"
         }
     },
     "extra": {
         "laravel": {
             "providers": [
-                "Thinkneverland\\Porter\\PorterServiceProvider"
-            ],
-            "aliases": {
-                "Porter": "Thinkneverland\\Porter\\Facades\\Porter"
-            }
+                "ThinkNeverland\\Porter\\PorterServiceProvider"
+            ]
         }
     }
 }
