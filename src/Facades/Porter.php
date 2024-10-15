@@ -1,6 +1,6 @@
 <?php
 
-namespace Thinkneverland\Porter\Facades;
+namespace ThinkNeverland\Porter\Facades;
 
 use Illuminate\Support\Facades\Facade;
 

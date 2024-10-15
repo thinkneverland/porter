@@ -14,7 +14,8 @@ class ExportCommand extends Command
         {--download : Option to download the file from S3}
         {--username= : The username for authentication (optional)}
         {--password= : The password for authentication (optional)}
-        {--drop-if-exists : Option to include DROP TABLE IF EXISTS for all tables (optional)}';
+        {--drop-if-exists : Option to include DROP TABLE IF EXISTS for all tables (optional)}
+        {--ignore-if-exists : Option to leave IF EXISTS for all tables (optional)}';
 
     protected $description = 'Export the database to an SQL file.';
 
@@ -52,13 +53,16 @@ class ExportCommand extends Command
             return 1;
         }
 
-        // Check if the "DROP IF EXISTS" option is passed via CLI, else prompt
-        $dropIfExists = $this->option('drop-if-exists') ?: $this->confirm('Include DROP TABLE IF EXISTS for all tables?');
+        // Check if the "DROP IF EXISTS" option is passed via CLI, else prompt with "no" as the default
+        $dropIfExists = $this->option('drop-if-exists') ?: $this->confirm('Include DROP TABLE IF EXISTS for all tables?', false);
+
+        // Check if the "IGNORE IF EXISTS" option is passed via CLI
+        $ignoreIfExists = $this->option('ignore-if-exists') ?: $this->confirm('Leave IF EXISTS for all tables?', false);
 
         // Proceed with export
         $filePath = $this->argument('file');
         $useS3Storage = config('porter.useS3Storage');
-        $storagePath = $this->exportService->export($filePath, $useS3Storage, $dropIfExists, true);
+        $storagePath = $this->exportService->export($filePath, $useS3Storage, $dropIfExists, $ignoreIfExists, true);
 
         $this->info('Database exported successfully to: ' . $storagePath);
 

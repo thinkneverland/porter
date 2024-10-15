@@ -18,8 +18,6 @@ class PorterServiceProvider extends ServiceProvider
 
     public function boot()
     {
-        // Register the PorterPolicy located in App\Policies
-        Gate::policy('Porter', \App\Policies\PorterPolicy::class);
 
         if ($this->app->runningInConsole()) {
             $this->publishes([
