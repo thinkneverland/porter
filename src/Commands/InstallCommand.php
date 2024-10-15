@@ -24,7 +24,7 @@ class InstallCommand extends Command
     }
 
     /**
-     * Configure S3 settings and optionally configure a second instance.
+     * Configure S3 settings and optionally configure a source instance.
      */
     protected function configureS3()
     {
@@ -36,17 +36,17 @@ class InstallCommand extends Command
         $this->promptS3Credentials('AWS_URL', 'Enter your AWS URL');
         $this->promptS3Credentials('AWS_ENDPOINT', 'Enter your AWS Endpoint', true);
 
-        // Prompt for the second set of S3 credentials if required
-        if ($this->confirm('Would you like to configure a second S3 instance?')) {
-            $this->promptS3Credentials('SECOND_AWS_ACCESS_KEY_ID', 'Enter your SECOND AWS Access Key ID');
-            $this->promptS3Credentials('SECOND_AWS_SECRET_ACCESS_KEY', 'Enter your SECOND AWS Secret Access Key');
-            $this->promptS3Credentials('SECOND_AWS_REGION', 'Enter your SECOND AWS Region');
-            $this->promptS3Credentials('SECOND_AWS_BUCKET', 'Enter your SECOND S3 Bucket name');
-            $this->promptS3Credentials('SECOND_AWS_URL', 'Enter your SECOND AWS URL');
-            $this->promptS3Credentials('SECOND_AWS_ENDPOINT', 'Enter your SECOND AWS Endpoint', true);
-            $this->promptS3Credentials('SECOND_AWS_USE_PATH_STYLE_ENDPOINT', 'Use path-style access for the SECOND AWS S3 instance?', false, true);
-        } elseif ($this->confirm('Is the second instance the same as the first, but with a different bucket?')) {
-            $this->copyS3CredentialsFromPrimaryToSecondary();
+        // Prompt for the source set of S3 credentials if required
+        if ($this->confirm('Would you like to configure a source S3 instance?')) {
+            $this->promptS3Credentials('AWS_SOURCE_ACCESS_KEY_ID', 'Enter your SOURCE AWS Access Key ID');
+            $this->promptS3Credentials('AWS_SOURCE_SECRET_ACCESS_KEY', 'Enter your SOURCE AWS Secret Access Key');
+            $this->promptS3Credentials('AWS_SOURCE_REGION', 'Enter your SOURCE AWS Region');
+            $this->promptS3Credentials('AWS_SOURCE_BUCKET', 'Enter your SOURCE S3 Bucket name');
+            $this->promptS3Credentials('AWS_SOURCE_URL', 'Enter your SOURCE AWS URL');
+            $this->promptS3Credentials('AWS_SOURCE_ENDPOINT', 'Enter your SOURCE AWS Endpoint', true);
+            $this->promptS3Credentials('AWS_SOURCE_USE_PATH_STYLE_ENDPOINT', 'Use path-style access for the SOURCE AWS S3 instance?', false, true);
+        } elseif ($this->confirm('Is the source instance the same as the first, but with a different bucket?')) {
+            $this->copyS3CredentialsFromPrimaryToSource();
         }
     }
 
@@ -64,17 +64,17 @@ class InstallCommand extends Command
     }
 
     /**
-     * Helper to copy primary S3 credentials to secondary if requested.
+     * Helper to copy primary S3 credentials to source if requested.
      */
-    protected function copyS3CredentialsFromPrimaryToSecondary()
+    protected function copyS3CredentialsFromPrimaryToSource()
     {
-        $this->updateEnvFile('SECOND_AWS_ACCESS_KEY_ID', env('AWS_ACCESS_KEY_ID'));
-        $this->updateEnvFile('SECOND_AWS_SECRET_ACCESS_KEY', env('AWS_SECRET_ACCESS_KEY'));
-        $this->updateEnvFile('SECOND_AWS_REGION', env('AWS_DEFAULT_REGION'));
-        $this->updateEnvFile('SECOND_AWS_URL', env('AWS_URL'));
-        $this->updateEnvFile('SECOND_AWS_ENDPOINT', env('AWS_ENDPOINT'));
-        $this->updateEnvFile('SECOND_AWS_BUCKET', $this->ask('Enter the SECOND S3 Bucket name'));
-        $this->updateEnvFile('SECOND_AWS_USE_PATH_STYLE_ENDPOINT', 'false'); // default to false if copied
+        $this->updateEnvFile('AWS_SOURCE_ACCESS_KEY_ID', env('AWS_ACCESS_KEY_ID'));
+        $this->updateEnvFile('AWS_SOURCE_SECRET_ACCESS_KEY', env('AWS_SECRET_ACCESS_KEY'));
+        $this->updateEnvFile('AWS_SOURCE_REGION', env('AWS_DEFAULT_REGION'));
+        $this->updateEnvFile('AWS_SOURCE_URL', env('AWS_URL'));
+        $this->updateEnvFile('AWS_SOURCE_ENDPOINT', env('AWS_ENDPOINT'));
+        $this->updateEnvFile('AWS_SOURCE_BUCKET', $this->ask('Enter the SOURCE S3 Bucket name'));
+        $this->updateEnvFile('AWS_SOURCE_USE_PATH_STYLE_ENDPOINT', 'false'); // default to false if copied
     }
 
     /**
