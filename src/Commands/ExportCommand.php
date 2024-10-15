@@ -9,7 +9,13 @@ use ThinkNeverland\Porter\Services\PorterService;
 
 class ExportCommand extends Command
 {
-    protected $signature = 'porter:export {file} {--download}';
+    protected $signature = 'porter:export
+        {file : The path to export the SQL file}
+        {--download : Option to download the file from S3}
+        {--username= : The username for authentication (optional)}
+        {--password= : The password for authentication (optional)}
+        {--drop-if-exists : Option to include DROP TABLE IF EXISTS for all tables (optional)}';
+
     protected $description = 'Export the database to an SQL file.';
 
     protected $exportService;
@@ -22,19 +28,23 @@ class ExportCommand extends Command
 
     public function handle()
     {
-        // Check authentication
+        // Check if user is already authenticated
         if (!Auth::check()) {
-            $username = $this->ask('Enter your username');
-            $password = $this->secret('Enter your password');
+            // If not authenticated, use CLI options for username and password or prompt for them
+            $username = $this->option('username') ?: $this->ask('Enter your username');
+            $password = $this->option('password') ?: $this->secret('Enter your password');
 
+            // Authentication
             if (!Auth::attempt(['email' => $username, 'password' => $password])) {
                 $this->error('Invalid credentials.');
                 return 1;
             }
         }
 
-        // Authorization check from config
+        // Get the currently authenticated user
         $user = Auth::user();
+
+        // Authorization check from config
         $authorization = config('porter.authorization.export');
 
         if (!$authorization($user)) {
@@ -42,8 +52,8 @@ class ExportCommand extends Command
             return 1;
         }
 
-        // Prompt once for `DROP IF EXISTS`
-        $dropIfExists = $this->confirm('Include DROP TABLE IF EXISTS for all tables?');
+        // Check if the "DROP IF EXISTS" option is passed via CLI, else prompt
+        $dropIfExists = $this->option('drop-if-exists') ?: $this->confirm('Include DROP TABLE IF EXISTS for all tables?');
 
         // Proceed with export
         $filePath = $this->argument('file');

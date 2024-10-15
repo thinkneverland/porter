@@ -40,7 +40,7 @@ class InstallCommand extends Command
         if ($this->confirm('Would you like to configure a source S3 instance?')) {
             $this->promptS3Credentials('AWS_SOURCE_ACCESS_KEY_ID', 'Enter your SOURCE AWS Access Key ID');
             $this->promptS3Credentials('AWS_SOURCE_SECRET_ACCESS_KEY', 'Enter your SOURCE AWS Secret Access Key');
-            $this->promptS3Credentials('AWS_SOURCE_REGION', 'Enter your SOURCE AWS Region');
+            $this->promptS3Credentials('AWS_SOURCE_DEFAULT_REGION', 'Enter your SOURCE AWS Region');
             $this->promptS3Credentials('AWS_SOURCE_BUCKET', 'Enter your SOURCE S3 Bucket name');
             $this->promptS3Credentials('AWS_SOURCE_URL', 'Enter your SOURCE AWS URL');
             $this->promptS3Credentials('AWS_SOURCE_ENDPOINT', 'Enter your SOURCE AWS Endpoint', true);
@@ -70,7 +70,7 @@ class InstallCommand extends Command
     {
         $this->updateEnvFile('AWS_SOURCE_ACCESS_KEY_ID', env('AWS_ACCESS_KEY_ID'));
         $this->updateEnvFile('AWS_SOURCE_SECRET_ACCESS_KEY', env('AWS_SECRET_ACCESS_KEY'));
-        $this->updateEnvFile('AWS_SOURCE_REGION', env('AWS_DEFAULT_REGION'));
+        $this->updateEnvFile('AWS_SOURCE_DEFAULT_REGION', env('AWS_DEFAULT_REGION'));
         $this->updateEnvFile('AWS_SOURCE_URL', env('AWS_URL'));
         $this->updateEnvFile('AWS_SOURCE_ENDPOINT', env('AWS_ENDPOINT'));
         $this->updateEnvFile('AWS_SOURCE_BUCKET', $this->ask('Enter the SOURCE S3 Bucket name'));
