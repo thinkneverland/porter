@@ -42,6 +42,7 @@ class PorterServiceProvider extends ServiceProvider
         Route::get('/download/{file}', function ($file) {
             try {
                 $decryptedFileName = Crypt::decryptString($file);
+
                 return Storage::disk('public')->download($decryptedFileName);
             } catch (\Exception $e) {
                 return response()->json(['error' => 'File not found.'], 404);

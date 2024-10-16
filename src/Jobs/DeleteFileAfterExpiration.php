@@ -5,15 +5,18 @@ namespace ThinkNeverland\Porter\Jobs;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
-use Illuminate\Queue\InteractsWithQueue;
-use Illuminate\Queue\SerializesModels;
+use Illuminate\Queue\{InteractsWithQueue, SerializesModels};
 use Illuminate\Support\Facades\Storage;
 
 class DeleteFileAfterExpiration implements ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use Dispatchable;
+    use InteractsWithQueue;
+    use Queueable;
+    use SerializesModels;
 
     protected $filePath;
+
     protected $disk;
 
     /**
@@ -25,7 +28,7 @@ class DeleteFileAfterExpiration implements ShouldQueue
     public function __construct(string $filePath, string $disk)
     {
         $this->filePath = $filePath;
-        $this->disk = $disk;
+        $this->disk     = $disk;
     }
 
     /**

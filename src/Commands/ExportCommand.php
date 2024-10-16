@@ -3,10 +3,9 @@
 namespace ThinkNeverland\Porter\Commands;
 
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\Crypt;
-use ThinkNeverland\Porter\Services\PorterService;
+use Illuminate\Support\Facades\{Crypt, Storage};
 use ThinkNeverland\Porter\Jobs\DeleteFileAfterExpiration;
+use ThinkNeverland\Porter\Services\PorterService;
 
 class ExportCommand extends Command
 {
@@ -28,13 +27,13 @@ class ExportCommand extends Command
 
     public function handle()
     {
-        $filePath = $this->argument('file');
+        $filePath     = $this->argument('file');
         $dropIfExists = $this->option('drop-if-exists') ? true : false;
         $keepIfExists = $this->option('keep-if-exists') ? true : false;
         $noExpiration = $this->option('no-expiration') ? true : false;
 
         // Use correct disk based on configuration
-        $disk = config('filesystems.default');
+        $disk     = config('filesystems.default');
         $filePath = ltrim($filePath, '/'); // Adjust the file path for S3
 
         // Proceed with export
