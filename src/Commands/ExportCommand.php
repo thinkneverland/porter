@@ -10,7 +10,6 @@ class ExportCommand extends Command
 {
     protected $signature = 'porter:export
         {file : The path to export the SQL file}
-        {--download : Option to download the file from S3}
         {--drop-if-exists : Option to include DROP TABLE IF EXISTS for all tables (optional)}
         {--keep-if-exists : Option to keep IF EXISTS for all tables (optional)}';
 
@@ -26,34 +25,50 @@ class ExportCommand extends Command
 
     public function handle()
     {
-        // Check if the "DROP IF EXISTS" or "KEEP IF EXISTS" option is passed via CLI, else prompt
-        $dropIfExists = $this->option('drop-if-exists') ?: $this->confirm('Include DROP TABLE IF EXISTS for all tables?', false);
-        $keepIfExists = $this->option('keep-if-exists') ?: $this->confirm('Include KEEP IF EXISTS for all tables?', false);
+        // No prompts if --drop-if-exists or --keep-if-exists flags are used
+        $dropIfExists = $this->option('drop-if-exists') ?: false;
+        $keepIfExists = $this->option('keep-if-exists') ?: false;
 
         // Proceed with export
-        $filePath     = $this->argument('file');
-        $useS3Storage = config('porter.useS3Storage');
-        $storagePath  = $this->exportService->export($filePath, $useS3Storage, $dropIfExists, $keepIfExists, true);
+        $filePath = $this->argument('file');
+        $storagePath = $this->exportService->export($filePath, $dropIfExists, $keepIfExists, true);
 
-        $this->info('Database exported successfully to: ' . $storagePath);
+        // Provide a relative file path
+        $this->info('Database exported successfully to: ' . $filePath);
 
-        // Optional download from S3
-        if ($this->option('download') && $useS3Storage) {
-            $this->downloadSqlFile($storagePath);
-        }
+        // Generate a temporary download link
+        $downloadLink = $this->generateDownloadLink($storagePath);
 
-        return 0;
+        // Display the download link
+        $this->info('Download your SQL file here: ' . $downloadLink);
+
+        // Schedule file deletion after link expiration
+        $this->scheduleFileDeletion($filePath);
     }
 
-    protected function downloadSqlFile(string $filePath)
+    protected function generateDownloadLink(string $filePath)
     {
-        $disk = 's3';
+        $disk = config('filesystems.default', 'local');
 
-        if (Storage::disk($disk)->exists($filePath)) {
-            $url = Storage::disk($disk)->temporaryUrl($filePath, now()->addMinutes(30));
-            $this->info('Download your SQL file here: ' . $url);
-        } else {
-            $this->error('SQL file does not exist.');
+        if ($disk === 's3') {
+            // Generate a temporary link for S3
+            return Storage::disk('s3')->temporaryUrl($filePath, now()->addMinutes(30));
+        }
+
+        // Generate a local download link (assuming local file access via a relative URL)
+        $relativePath = str_replace(storage_path('app/'), '', $filePath);
+        return route('download', ['file' => $relativePath]); // Assuming there's a route to handle local file downloads
+    }
+
+    protected function scheduleFileDeletion(string $filePath)
+    {
+        // Schedule deletion of the file after 30 minutes
+        $disk = config('filesystems.default', 'local');
+
+        // For S3, simply let the expiration on the link handle it (S3 handles the expiration).
+        if ($disk !== 's3') {
+            // For local files, we need to delete the file after 30 minutes
+            Storage::disk('local')->delete($filePath, now()->addMinutes(30));
         }
     }
 }

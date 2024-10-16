@@ -52,104 +52,60 @@ Primary and secondary S3 buckets can be configured in the `porter.php` config fi
 ],
 ```
 
----
-
-## Usage
-
-### Export Command
-The `porter:export` command allows exporting the database to an SQL file. Here are the flags you can use with this command:
-
-#### Usage:
-```bash
-php artisan porter:export {file} [options]
-```
-
-#### Flags:
-- `file`: **(Required)** The path where the exported SQL file will be saved. This is a mandatory argument.
-- `--download`: **(Optional)** If this flag is provided, the exported SQL file will be available for download from the S3 bucket.
-- `--drop-if-exists`: **(Optional)** Include the `DROP TABLE IF EXISTS` statement for all tables in the export. This ensures that tables are dropped before creating them again during an import.
-- `--keep-if-exists`: **(Optional)** Leave `IF EXISTS` statements in the export process for table creation.
-
-#### Example:
-```bash
-php artisan porter:export export.sql --download --drop-if-exists
-```
-This command exports the database to a file named `export.sql`, includes the `DROP TABLE IF EXISTS` statement, and downloads the file from S3.
-
----
-
-### Import Command
-The `porter:import` command imports an SQL file into the database. This command does not have any additional flags.
-
-#### Usage:
-```bash
-php artisan porter:import {file}
-```
-
-#### Flags:
-- `file`: **(Required)** The path to the SQL file that will be imported into the database.
-
-#### Example:
-```bash
-php artisan porter:import /path/to/database.sql
-```
-This command imports the SQL file located at `/path/to/database.sql` into the database.
-
----
-
-### Clone S3 Command
-The `porter:clone-s3` command allows cloning files from one S3 bucket to another. This command does not have any additional flags.
-
-#### Usage:
-```bash
-php artisan porter:clone-s3
-```
-
-#### Example:
-```bash
-php artisan porter:clone-s3
-```
-This command clones all files from the source S3 bucket (as defined in your environment settings) to the target S3 bucket.
-
----
-
 ## Exporting Database
 
+The `porter:export` command exports the database into an SQL file. This can be stored locally or on S3, depending on your configuration.
+
+### Usage:
 ```bash
-php artisan porter:export
+php artisan porter:export {file} [--drop-if-exists] [--keep-if-exists]
 ```
 
-This will export the database and store it either locally or on S3, based on your configuration.
+### Example with flags:
+```bash
+php artisan porter:export export.sql --drop-if-exists
+```
+
+#### Flags:
+- `--drop-if-exists` : Includes `DROP TABLE IF EXISTS` for all tables in the export file.
+- `--keep-if-exists` : Ensures that `IF EXISTS` is kept for all tables.
+- After export, a temporary download link is generated that expires after 30 minutes. The exported file is deleted after expiration.
+
+#### Example Output:
+```bash
+Database exported successfully to: export.sql
+Download your SQL file here: http://localhost/download/export.sql
+```
 
 ## Importing Database
 
-You can import a database from a file by specifying the file path:
+The `porter:import` command allows you to import a database SQL file from local or S3 storage.
 
+### Usage:
 ```bash
 php artisan porter:import /path/to/database.sql
 ```
 
 ### Example: Import from S3
-
 ```bash
 php artisan porter:import s3://bucket-name/path/to/database.sql
 ```
 
 ### Example: Import from Local File
-
 ```bash
 php artisan porter:import /local/storage/path/database.sql
 ```
 
 ## Cloning S3 Buckets
 
-The `clone-s3` command allows you to clone content between S3 buckets:
+The `clone-s3` command allows you to clone content between S3 buckets as defined in your configuration.
 
+### Usage:
 ```bash
 php artisan porter:clone-s3
 ```
 
-This will clone files from the source bucket to the target bucket as defined in your configuration.
+This will clone files from the source bucket to the target bucket as defined in your `.env` configuration.
 
 ## Model-based Configuration
 
@@ -159,11 +115,15 @@ Instead of using the config file, randomization and keeping specific rows for ta
 // Inside the User model:
 // These will be randomized during Porter export/import operations.
 protected static $omittedFromPorter = ['email', 'name'];
-// This will key the rows during Porter export/import operations.
+// This will keep specific rows during Porter export/import operations.
 protected static $keepForPorter = [1, 2, 3];
 // This will ensure the model is ignored during Porter export/import operations.
 public static $ignoreFromPorter = true;
-
 ```
 
 You can also ignore specific tables directly in the model to prevent them from being exported.
+
+```php
+// In a model:
+public static $ignoreFromPorter = true;
+```
