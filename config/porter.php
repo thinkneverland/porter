@@ -11,8 +11,6 @@ return [
     |
     */
 
-    'useS3Storage' => env('USE_S3_FOR_DB_EXPORT', false),
-
     'primaryS3' => [
         'bucket'         => env('AWS_BUCKET'),
         'region'         => env('AWS_DEFAULT_REGION'),

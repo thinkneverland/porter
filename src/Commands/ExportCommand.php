@@ -3,7 +3,8 @@
 namespace ThinkNeverland\Porter\Commands;
 
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\{Crypt, Storage};
+use ThinkNeverland\Porter\Jobs\DeleteFileAfterExpiration;
 use ThinkNeverland\Porter\Services\PorterService;
 
 class ExportCommand extends Command
@@ -11,7 +12,8 @@ class ExportCommand extends Command
     protected $signature = 'porter:export
         {file : The path to export the SQL file}
         {--drop-if-exists : Option to include DROP TABLE IF EXISTS for all tables (optional)}
-        {--keep-if-exists : Option to keep IF EXISTS for all tables (optional)}';
+        {--keep-if-exists : Option to leave IF EXISTS for all tables (optional)}
+        {--no-expiration : Generate a download link without expiration (optional)}';
 
     protected $description = 'Export the database to an SQL file.';
 
@@ -25,50 +27,52 @@ class ExportCommand extends Command
 
     public function handle()
     {
-        // No prompts if --drop-if-exists or --keep-if-exists flags are used
-        $dropIfExists = $this->option('drop-if-exists') ?: false;
-        $keepIfExists = $this->option('keep-if-exists') ?: false;
+        // Get CLI options and arguments
+        $filePath     = $this->argument('file');
+        $dropIfExists = $this->option('drop-if-exists') ? true : false;
+        $keepIfExists = $this->option('keep-if-exists') ? true : false;
+        $noExpiration = $this->option('no-expiration') ? true : false;
 
-        // Proceed with export
-        $filePath = $this->argument('file');
-        $storagePath = $this->exportService->export($filePath, $dropIfExists, $keepIfExists, true);
+        // Ensure the file is saved in the public storage directory
+        $filePath = 'public/' . ltrim($filePath, '/');
 
-        // Provide a relative file path
-        $this->info('Database exported successfully to: ' . $filePath);
+        // Proceed with export using filesystem configuration
+        $storagePath = $this->exportService->export($filePath, $dropIfExists);
 
-        // Generate a temporary download link
-        $downloadLink = $this->generateDownloadLink($storagePath);
+        // Encrypt the file name
+        $encryptedFileName = Crypt::encryptString($filePath);
 
-        // Display the download link
+        // Generate download link
+        $downloadLink = $this->generateDownloadLink($encryptedFileName, $noExpiration);
+
+        // Output success message and download link
+        $this->info('Database exported successfully to: ' . $storagePath);
         $this->info('Download your SQL file here: ' . $downloadLink);
 
-        // Schedule file deletion after link expiration
-        $this->scheduleFileDeletion($filePath);
-    }
-
-    protected function generateDownloadLink(string $filePath)
-    {
-        $disk = config('filesystems.default', 'local');
-
-        if ($disk === 's3') {
-            // Generate a temporary link for S3
-            return Storage::disk('s3')->temporaryUrl($filePath, now()->addMinutes(30));
+        // Dispatch job to delete file after expiration if the link is temporary
+        if (!$noExpiration) {
+            $deletionTime = now()->addMinutes(30);
+            DeleteFileAfterExpiration::dispatch($storagePath, config('filesystems.default'))->delay($deletionTime);
         }
 
-        // Generate a local download link (assuming local file access via a relative URL)
-        $relativePath = str_replace(storage_path('app/'), '', $filePath);
-        return route('download', ['file' => $relativePath]); // Assuming there's a route to handle local file downloads
+        return 0;
     }
 
-    protected function scheduleFileDeletion(string $filePath)
+    /**
+     * Generate a download link based on the storage method.
+     */
+    protected function generateDownloadLink(string $encryptedFileName, bool $noExpiration = false)
     {
-        // Schedule deletion of the file after 30 minutes
-        $disk = config('filesystems.default', 'local');
+        $decryptedFileName = Crypt::decryptString($encryptedFileName);
 
-        // For S3, simply let the expiration on the link handle it (S3 handles the expiration).
-        if ($disk !== 's3') {
-            // For local files, we need to delete the file after 30 minutes
-            Storage::disk('local')->delete($filePath, now()->addMinutes(30));
+        if (config('filesystems.default') === 's3') {
+            if (!$noExpiration) {
+                return Storage::disk('s3')->temporaryUrl($decryptedFileName, now()->addDay());
+            } else {
+                return Storage::disk('s3')->temporaryUrl($decryptedFileName, now()->addCentury());
+            }
+        } else {
+            return route('porter.download', ['file' => $encryptedFileName]);
         }
     }
 }
