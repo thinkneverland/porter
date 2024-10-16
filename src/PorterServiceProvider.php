@@ -39,17 +39,13 @@ class PorterServiceProvider extends ServiceProvider
 
     protected function registerRoutes()
     {
-        Route::middleware('web')
-            ->group(function () {
-                Route::get('/download/{file}', function ($file) {
-                    try {
-                        $decryptedFileName = Crypt::decryptString($file);
-
-                        return Storage::disk(env('FILESYSTEM_DISK', 'public'))->download($decryptedFileName);
-                    } catch (\Exception $e) {
-                        return response()->json(['error' => 'File not found.'], 404);
-                    }
-                })->name('porter.download');
-            });
+        Route::get('/download/{file}', function ($file) {
+            try {
+                $decryptedFileName = Crypt::decryptString($file);
+                return Storage::disk('public')->download($decryptedFileName);
+            } catch (\Exception $e) {
+                return response()->json(['error' => 'File not found.'], 404);
+            }
+        })->name('porter.download');
     }
 }
