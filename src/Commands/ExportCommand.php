@@ -4,6 +4,7 @@ namespace ThinkNeverland\Porter\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\{Crypt, Storage};
+use ThinkNeverland\Porter\Jobs\DeleteFileAfterExpiration;
 use ThinkNeverland\Porter\Services\PorterService;
 
 class ExportCommand extends Command
@@ -47,6 +48,12 @@ class ExportCommand extends Command
         // Output success message and download link
         $this->info('Database exported successfully to: ' . $storagePath);
         $this->info('Download your SQL file here: ' . $downloadLink);
+
+        // Schedule file deletion if link is temporary
+        if (!$noExpiration) {
+            $deletionTime = now()->addMinutes(30);
+            DeleteFileAfterExpiration::dispatch($storagePath, $disk)->delay($deletionTime);
+        }
 
         return 0;
     }
