@@ -7,14 +7,15 @@ use Illuminate\Console\Command;
 class InstallCommand extends Command
 {
     protected $signature = 'porter:install';
+
     protected $description = 'Install Porter and publish configuration, and optionally configure S3 instances.';
 
     public function handle()
     {
         // Publish configuration
         $this->call('vendor:publish', [
-            '--tag' => 'config',
-            '--provider' => "ThinkNeverland\Porter\PorterServiceProvider"
+            '--tag'      => 'config',
+            '--provider' => "ThinkNeverland\Porter\PorterServiceProvider",
         ]);
 
         // Configure S3 settings
@@ -57,6 +58,7 @@ class InstallCommand extends Command
     {
         if (!$this->isEnvSet($envKey)) {
             $value = $isBoolean ? $this->confirm($message) ? 'true' : 'false' : $this->ask($message);
+
             if ($value || $optional) {
                 $this->updateEnvFile($envKey, $value);
             }
@@ -91,6 +93,7 @@ class InstallCommand extends Command
     protected function updateEnvFile(string $key, string $value): void
     {
         $envPath = base_path('.env');
+
         if (!preg_match("/^{$key}=/m", file_get_contents($envPath))) {
             file_put_contents($envPath, "\n{$key}={$value}", FILE_APPEND);
         }

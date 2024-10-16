@@ -3,11 +3,9 @@
 namespace ThinkNeverland\Porter\Services;
 
 use Exception;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Config;
-use Illuminate\Support\Facades\Storage;
-use Symfony\Component\Process\Process;
 use Faker\Factory as Faker;
+use Illuminate\Support\Facades\{Config, DB, Storage};
+use Symfony\Component\Process\Process;
 
 class PorterService
 {
@@ -29,7 +27,7 @@ class PorterService
      */
     public function export(string $filePath, bool $useS3Storage = false, bool $dropIfExists = false, bool $isCli = false): string
     {
-        $tables = $this->getAllTables();
+        $tables     = $this->getAllTables();
         $sqlContent = "SET FOREIGN_KEY_CHECKS=0;\n\n"; // Disable foreign key checks for the export
 
         foreach ($tables as $table) {
@@ -48,10 +46,12 @@ class PorterService
 
         if ($useS3Storage) {
             Storage::disk('s3')->put($filePath, $sqlContent);
+
             return Storage::disk('s3')->url($filePath);
         }
 
         Storage::put($filePath, $sqlContent);
+
         return Storage::path($filePath);
     }
 
@@ -65,7 +65,7 @@ class PorterService
     protected function getTableCreateStatement(string $table, bool $dropIfExists): string
     {
         $createStatement = DB::select("SHOW CREATE TABLE {$table}");
-        $sql = '';
+        $sql             = '';
 
         // Include DROP IF EXISTS only if selected
         if ($dropIfExists) {
@@ -73,6 +73,7 @@ class PorterService
         }
 
         $sql .= $createStatement[0]->{'Create Table'} . ";\n\n";
+
         return $sql;
     }
 
@@ -82,14 +83,15 @@ class PorterService
     protected function getTableData(string $table, $model): string
     {
         $data = DB::table($table)->get();
+
         if ($data->isEmpty()) {
             return '';
         }
 
         $randomizedColumns = $model ? $model::$omittedFromPorter : [];
-        $retainedRows = $model ? $model::$keepForPorter : [];
-        $faker = Faker::create();
-        $insertStatements = '';
+        $retainedRows      = $model ? $model::$keepForPorter : [];
+        $faker             = Faker::create();
+        $insertStatements  = '';
 
         foreach ($data as $row) {
             $values = [];
@@ -131,7 +133,7 @@ class PorterService
         try {
             // Check if the file exists locally or on S3
             if ($this->useS3Storage) {
-                $fileContents = Storage::disk('s3')->get($filePath);
+                $fileContents  = Storage::disk('s3')->get($filePath);
                 $localFilePath = storage_path('app/temp/' . basename($filePath));
                 file_put_contents($localFilePath, $fileContents);
             } else {
@@ -177,10 +179,10 @@ class PorterService
             if ($this->useS3Storage && file_exists($localFilePath)) {
                 unlink($localFilePath);
             }
-
         } catch (Exception $e) {
             // If import fails, restore from backup
             $this->restore($backupFilePath);
+
             throw new Exception('Import failed, database restored from backup. Error: ' . $e->getMessage());
         }
     }
@@ -254,24 +256,24 @@ class PorterService
     {
         // Use environment variables for source and target references
         $sourceDisk = Storage::build([
-            'driver' => 's3',
-            'key' => env('AWS_SOURCE_ACCESS_KEY_ID'),
-            'secret' => env('AWS_SOURCE_SECRET_ACCESS_KEY'),
-            'region' => env('AWS_SOURCE_DEFAULT_REGION'),  // Ensure region is set
-            'bucket' => env('AWS_SOURCE_BUCKET'),
-            'url' => env('AWS_SOURCE_URL'),
-            'endpoint' => env('AWS_SOURCE_ENDPOINT'),
+            'driver'                  => 's3',
+            'key'                     => env('AWS_SOURCE_ACCESS_KEY_ID'),
+            'secret'                  => env('AWS_SOURCE_SECRET_ACCESS_KEY'),
+            'region'                  => env('AWS_SOURCE_DEFAULT_REGION'),  // Ensure region is set
+            'bucket'                  => env('AWS_SOURCE_BUCKET'),
+            'url'                     => env('AWS_SOURCE_URL'),
+            'endpoint'                => env('AWS_SOURCE_ENDPOINT'),
             'use_path_style_endpoint' => env('AWS_SOURCE_USE_PATH_STYLE_ENDPOINT', true),
         ]);
 
         $targetDisk = Storage::build([
-            'driver' => 's3',
-            'key' => env('AWS_ACCESS_KEY_ID'),
-            'secret' => env('AWS_SECRET_ACCESS_KEY'),
-            'region' => env('AWS_DEFAULT_REGION'),  // Ensure region is set
-            'bucket' => env('AWS_BUCKET'),
-            'url' => env('AWS_URL'),
-            'endpoint' => env('AWS_ENDPOINT'),
+            'driver'                  => 's3',
+            'key'                     => env('AWS_ACCESS_KEY_ID'),
+            'secret'                  => env('AWS_SECRET_ACCESS_KEY'),
+            'region'                  => env('AWS_DEFAULT_REGION'),  // Ensure region is set
+            'bucket'                  => env('AWS_BUCKET'),
+            'url'                     => env('AWS_URL'),
+            'endpoint'                => env('AWS_ENDPOINT'),
             'use_path_style_endpoint' => env('AWS_USE_PATH_STYLE_ENDPOINT', true),
         ]);
 
@@ -290,6 +292,7 @@ class PorterService
     protected function getAllTables(): array
     {
         $result = DB::select('SHOW TABLES');
+
         return array_map(function ($table) {
             return reset($table);
         }, $result);
@@ -301,6 +304,7 @@ class PorterService
     protected function getModelForTable(string $table)
     {
         $models = config('porter.models'); // Assume a mapping between tables and models
+
         return $models[$table] ?? null;
     }
 }
