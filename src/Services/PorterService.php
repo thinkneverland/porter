@@ -3,8 +3,10 @@
 namespace ThinkNeverland\Porter\Services;
 
 use Exception;
-use Illuminate\Support\Facades\{DB, Storage};
-use Symfony\Component\Process\Process;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Config;
+use Faker\Factory as Faker;
 
 class PorterService
 {
@@ -12,25 +14,40 @@ class PorterService
      * Export the database to an SQL file.
      *
      * @param string $filePath
+     * @param bool $useS3Storage
      * @param bool $dropIfExists
+     * @param bool $isCli
      * @return string
      */
-    public function export(string $filePath, bool $dropIfExists = false): string
+    public function export(string $filePath, bool $useS3Storage = false, bool $dropIfExists = false, bool $isCli = false): string
     {
-        // Export logic here...
-        $tables     = DB::select('SHOW TABLES');
-        $sqlContent = "SET FOREIGN_KEY_CHECKS=0;\n\n"; // Disable foreign key checks for the export
+        // Disable foreign key checks for the export
+        $sqlContent = "SET FOREIGN_KEY_CHECKS=0;\n\n";
+        $tables = $this->getAllTables();
 
         foreach ($tables as $table) {
-            $tableName = reset($table);
-            $sqlContent .= $this->getTableCreateStatement($tableName, $dropIfExists);
-            $sqlContent .= $this->getTableData($tableName);
+            $model = $this->getModelForTable($table);
+
+            // Skip tables marked as protected from export
+            if ($model && $model::$ignoreFromPorter) {
+                continue;
+            }
+
+            $sqlContent .= $this->getTableCreateStatement($table, $dropIfExists);
+            $sqlContent .= $this->getTableData($table, $model);
         }
 
-        $sqlContent .= "\nSET FOREIGN_KEY_CHECKS=1;"; // Re-enable foreign key checks after export
-        Storage::disk(env('filesystem_disk'))->put($filePath, $sqlContent);
+        // Re-enable foreign key checks after export
+        $sqlContent .= "\nSET FOREIGN_KEY_CHECKS=1;";
 
-        return Storage::path($filePath);
+        // Store the SQL content to the appropriate disk
+        if ($useS3Storage) {
+            Storage::disk('s3')->put($filePath, $sqlContent);
+            return Storage::disk('s3')->url($filePath);
+        } else {
+            Storage::disk('public')->put($filePath, $sqlContent);
+            return Storage::disk('public')->path($filePath);
+        }
     }
 
     /**
@@ -43,39 +60,50 @@ class PorterService
     protected function getTableCreateStatement(string $table, bool $dropIfExists): string
     {
         $createStatement = DB::select("SHOW CREATE TABLE {$table}");
-        $sql             = '';
+        $sql = '';
 
+        // Optionally include DROP IF EXISTS
         if ($dropIfExists) {
             $sql .= "DROP TABLE IF EXISTS `{$table}`;\n";
         }
 
         $sql .= $createStatement[0]->{'Create Table'} . ";\n\n";
-
         return $sql;
     }
 
     /**
-     * Get the table data.
-     *
-     * @param string $table
-     * @return string
+     * Get the table data with Faker for randomization.
      */
-    protected function getTableData(string $table): string
+    protected function getTableData(string $table, $model): string
     {
         $data = DB::table($table)->get();
-
         if ($data->isEmpty()) {
             return '';
         }
 
+        $randomizedColumns = $model ? $model::$omittedFromPorter : [];
+        $retainedRows = $model ? $model::$keepForPorter : [];
+        $faker = Faker::create();
         $insertStatements = '';
 
         foreach ($data as $row) {
             $values = [];
 
-            foreach ($row as $value) {
-                $values[] = DB::getPdo()->quote($value);
+            foreach ($row as $key => $value) {
+                if (in_array($key, $randomizedColumns) && !in_array($row->id, $retainedRows)) {
+                    $value = $faker->word;
+                }
+
+                // Handle NULL and empty strings
+                if (is_null($value)) {
+                    $values[] = 'NULL';
+                } elseif ($value === '') {
+                    $values[] = 'NULL';
+                } else {
+                    $values[] = DB::getPdo()->quote($value);
+                }
             }
+
             $insertStatements .= "INSERT INTO {$table} VALUES (" . implode(', ', $values) . ");\n";
         }
 
@@ -83,89 +111,22 @@ class PorterService
     }
 
     /**
-     * Import an SQL file into the database.
-     *
-     * @param string $filePath
-     * @throws Exception
+     * Get all table names in the database.
      */
-    public function import(string $filePath): void
+    protected function getAllTables(): array
     {
-        $disk          = config('filesystems.default');
-        $localFilePath = ($disk === 's3')
-            ? $this->fetchFromS3($filePath)
-            : storage_path('app/public/' . basename($filePath));
-
-        if (!file_exists($localFilePath)) {
-            throw new Exception('SQL file not found: ' . $localFilePath);
-        }
-
-        $command = [
-            'mysql',
-            '-u', env('DB_USERNAME'),
-            '--host', env('DB_HOST', '127.0.0.1'),
-        ];
-
-        if (!empty(env('DB_PASSWORD'))) {
-            $command[] = '-p' . env('DB_PASSWORD');
-        }
-
-        $command[] = env('DB_DATABASE');
-        $command[] = '-e';
-        $command[] = 'source ' . $localFilePath;
-
-        $process = new Process($command);
-        $process->run();
-
-        if (!$process->isSuccessful()) {
-            throw new Exception('Database import failed: ' . $process->getErrorOutput());
-        }
-
-        if ($disk === 's3' && file_exists($localFilePath)) {
-            unlink($localFilePath);
-        }
+        $result = DB::select('SHOW TABLES');
+        return array_map(function ($table) {
+            return reset($table);
+        }, $result);
     }
 
     /**
-     * Fetch a file from S3 to a local temporary file.
-     *
-     * @param string $filePath
-     * @return string
+     * Get the corresponding model for a table, if it exists.
      */
-    protected function fetchFromS3(string $filePath): string
+    protected function getModelForTable(string $table)
     {
-        $fileContents  = Storage::disk('s3')->get($filePath);
-        $localFilePath = storage_path('app/temp/' . basename($filePath));
-        file_put_contents($localFilePath, $fileContents);
-
-        return $localFilePath;
-    }
-
-    /**
-     * Clone files from one S3 bucket to another.
-     *
-     * @param string $sourceBucket
-     * @param string $targetBucket
-     * @param string $sourceUrl
-     */
-    public function cloneS3(string $sourceBucket, string $targetBucket, string $sourceUrl): void
-    {
-        $sourceDisk = Storage::build([
-            'driver'                  => 's3',
-            'key'                     => env('AWS_SOURCE_ACCESS_KEY_ID'),
-            'secret'                  => env('AWS_SOURCE_SECRET_ACCESS_KEY'),
-            'region'                  => env('AWS_SOURCE_DEFAULT_REGION'),
-            'bucket'                  => $sourceBucket,
-            'url'                     => $sourceUrl,
-            'endpoint'                => env('AWS_SOURCE_ENDPOINT'),
-            'use_path_style_endpoint' => env('AWS_SOURCE_USE_PATH_STYLE_ENDPOINT', true),
-        ]);
-
-        $targetDisk = Storage::disk('s3');
-
-        $files = $sourceDisk->allFiles();
-
-        foreach ($files as $file) {
-            $targetDisk->put($file, $sourceDisk->get($file));
-        }
+        $models = config('porter.models'); // Assume a mapping between tables and models
+        return $models[$table] ?? null;
     }
 }
