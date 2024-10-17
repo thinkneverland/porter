@@ -59,7 +59,7 @@ class ExportCommand extends Command
 
         // Dispatch job to delete file after expiration if the link is temporary
         if (!$noExpiration) {
-            $deletionTime = now()->addMinutes(30);
+            $deletionTime = now()->addMinutes(15);
             DeleteFileAfterExpiration::dispatch($storagePath, $disk)->delay($deletionTime);
         }
 
