@@ -28,8 +28,7 @@ class PorterService
         }
 
         $sqlContent .= "\nSET FOREIGN_KEY_CHECKS=1;"; // Re-enable foreign key checks after export
-
-        Storage::put($filePath, $sqlContent);
+        Storage::disk(env('filesystem_disk'))->put($filePath, $sqlContent);
 
         return Storage::path($filePath);
     }

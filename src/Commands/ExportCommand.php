@@ -29,7 +29,6 @@ class ExportCommand extends Command
     {
         $filePath     = $this->argument('file');
         $dropIfExists = $this->option('drop-if-exists') ? true : false;
-        $keepIfExists = $this->option('keep-if-exists') ? true : false;
         $noExpiration = $this->option('no-expiration') ? true : false;
 
         // Use correct disk based on configuration
@@ -37,7 +36,7 @@ class ExportCommand extends Command
         $filePath = ltrim($filePath, '/'); // Adjust the file path for S3
 
         // Proceed with export
-        $storagePath = $this->exportService->export($filePath, $dropIfExists, $keepIfExists);
+        $storagePath = $this->exportService->export($filePath, $dropIfExists);
 
         // Encrypt the file name for the download link
         $encryptedFileName = Crypt::encryptString($filePath);

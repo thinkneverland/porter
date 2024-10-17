@@ -58,7 +58,7 @@ The `porter:export` command exports the database into an SQL file. This can be s
 
 ### Usage:
 ```bash
-php artisan porter:export {file} [--drop-if-exists] [--keep-if-exists]
+php artisan porter:export {file} [--drop-if-exists]
 ```
 
 ### Example with flags:
