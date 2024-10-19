@@ -44,8 +44,8 @@ class ExportService
             // Try to find a corresponding model for the table.
             $modelClass = $this->getModelForTable($tableName);
 
-            // If there is a model and it should be ignored, skip it.
-            if ($modelClass && $modelClass::$ignoreFromPorter ?? false) {
+            // Check if the model has a skip property ($ignoreFromPorter), if so, skip it.
+            if ($modelClass && $this->shouldIgnoreModel($modelClass)) {
                 $this->info("Skipping table: {$tableName} (ignored by model configuration)");
                 continue;
             }
@@ -233,5 +233,18 @@ class ExportService
         }
 
         return $models;
+    }
+
+    /**
+     * Check if the model should be ignored in the export process.
+     * Use property_exists() to check for the $ignoreFromPorter property.
+     *
+     * @param string $modelClass The class of the model to check.
+     * @return bool True if the model should be ignored, false otherwise.
+     */
+    protected function shouldIgnoreModel($modelClass)
+    {
+        // Check if the model has the $ignoreFromPorter property, and if so, if it's set to true.
+        return isset($modelClass::$ignoreFromPorter) && $modelClass::$ignoreFromPorter === true;
     }
 }
