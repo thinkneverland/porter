@@ -25,8 +25,8 @@ class ExportService
         $disk              = Storage::disk(config('filesystems.default'));
         $encryptedFilename = Crypt::encryptString($filename);
 
-        // Fetch the database tables (This should be done regardless of storage type)
-        $tables = DB::select('SHOW TABLES'); // Query to fetch tables
+        // Fetch the database tables
+        $tables = DB::select('SHOW TABLES');
 
         // If the disk is S3, handle multipart upload directly with AWS SDK
         if ($this->isRemoteDisk()) {
@@ -99,12 +99,17 @@ class ExportService
 
             fclose($tempStream);
 
-            // Return a temporary or permanent URL
+            // Generate URL for S3
             if (!$noExpiration) {
-                return $disk->temporaryUrl($encryptedFilename, now()->addSeconds(config('porter.expiration')));
+                // Generate a temporary signed URL (e.g., valid for 30 minutes)
+                $url = $disk->temporaryUrl($encryptedFilename, now()->addMinutes(30));
+            } else {
+                // Generate a public URL if the file is public
+                $url = $disk->url($encryptedFilename);
             }
 
-            return $disk->url($encryptedFilename);
+            // Return the correct URL for S3
+            return $url;
         } else {
             // For public/local storage
             $filePath    = storage_path("app/public/{$encryptedFilename}");
@@ -139,6 +144,7 @@ class ExportService
             return asset("storage/{$encryptedFilename}");
         }
     }
+
     /**
      * Flush the contents of the temp stream to S3 as a part of multipart upload.
      */
