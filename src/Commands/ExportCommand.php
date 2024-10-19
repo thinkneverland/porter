@@ -19,7 +19,7 @@ class ExportCommand extends Command
     public function handle()
     {
         // Retrieve arguments and options passed by the user.
-        $filename = $this->argument('filename');
+        $filename     = $this->argument('filename');
         $dropIfExists = $this->option('drop-if-exists');
         $noExpiration = $this->option('no-expiration');
 

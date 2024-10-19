@@ -2,10 +2,10 @@
 
 namespace ThinkNeverland\Porter\Services;
 
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\Crypt;
-use Illuminate\Support\Facades\DB;
 use Faker\Factory as Faker;
+use Illuminate\Support\Facades\{Crypt, DB, Storage};
+use Illuminate\Support\Str;
+use Symfony\Component\Finder\Finder;
 
 class ExportService
 {
@@ -29,7 +29,7 @@ class ExportService
         $encryptedFilename = Crypt::encryptString($filename);
 
         // Create a temporary file for storing the SQL dump
-        $tempFile = tmpfile();
+        $tempFile = tmpfile(); // Temporary file handle
 
         // Optionally add DROP IF EXISTS statements for each table.
         if ($dropIfExists) {
@@ -67,19 +67,20 @@ class ExportService
         // Rewind the file so it can be read for upload
         rewind($tempFile);
 
-        // If using remote storage (S3, etc.), upload the file directly from the stream.
-        if ($disk->getDriver()->supportsVisibility()) {
-            // Upload to S3 or remote disk using putStream()
-            $disk->putStream($encryptedFilename, $tempFile);
+        // If using a remote disk (like S3), upload the file using putStream().
+        if ($this->isRemoteDisk($disk)) {
+            // Stream the file directly to the remote storage (e.g., S3)
+            $disk->put($encryptedFilename, stream_get_contents($tempFile));
 
             // Close the temp file
             fclose($tempFile);
 
-            // Generate a temporary URL if required
+            // Generate a temporary URL if needed
             if (!$noExpiration) {
                 return $disk->temporaryUrl($encryptedFilename, now()->addSeconds(config('porter.expiration')));
             }
 
+            // Return the remote URL
             return $disk->url($encryptedFilename);
         }
 
@@ -90,7 +91,7 @@ class ExportService
         // Close the temp file
         fclose($tempFile);
 
-        // Return the local path for the exported file
+        // Return the local file path as the download link
         return $localPath;
     }
 
@@ -134,6 +135,7 @@ class ExportService
             // Check if the row is marked to not be randomized (if the model defines keepForPorter).
             if (isset($modelClass::$keepForPorter) && in_array($row->id, $modelClass::$keepForPorter)) {
                 $this->writeInsertStatement($stream, $tableName, (array) $row);
+
                 continue;
             }
 
@@ -179,7 +181,7 @@ class ExportService
     protected function writeInsertStatement($stream, $tableName, array $row)
     {
         $columns = implode('`, `', array_keys($row));
-        $values = implode("', '", array_map('addslashes', array_values($row)));
+        $values  = implode("', '", array_map('addslashes', array_values($row)));
 
         fwrite($stream, "INSERT INTO `{$tableName}` (`{$columns}`) VALUES ('{$values}');\n");
     }
@@ -195,7 +197,7 @@ class ExportService
         $models = $this->getAllModels();
 
         foreach ($models as $modelClass) {
-            $model = new $modelClass;
+            $model = new $modelClass();
 
             if ($model->getTable() === $tableName) {
                 return $modelClass;
@@ -212,15 +214,16 @@ class ExportService
      */
     protected function getAllModels()
     {
-        $models = [];
+        $models    = [];
         $namespace = app()->getNamespace();
         $modelPath = app_path('Models');
 
         // Use Symfony's Finder component to scan all files in the app/Models directory
         $finder = new Finder();
+
         foreach ($finder->files()->in($modelPath)->name('*.php') as $file) {
             $relativePath = str_replace('/', '\\', $file->getRelativePathname());
-            $class = $namespace . 'Models\\' . Str::replaceLast('.php', '', $relativePath);
+            $class        = $namespace . 'Models\\' . Str::replaceLast('.php', '', $relativePath);
 
             if (class_exists($class)) {
                 $models[] = $class;
@@ -240,5 +243,17 @@ class ExportService
     protected function shouldIgnoreModel($modelClass)
     {
         return isset($modelClass::$ignoreFromPorter) && $modelClass::$ignoreFromPorter === true;
+    }
+
+    /**
+     * Check if the current disk is a remote disk (e.g., S3).
+     *
+     * @param \Illuminate\Contracts\Filesystem\Filesystem $disk
+     * @return bool True if the disk is remote, false if local.
+     */
+    protected function isRemoteDisk($disk)
+    {
+        // This works for remote disks like S3
+        return $disk->getDriver() instanceof \League\Flysystem\FilesystemOperator;
     }
 }

@@ -19,34 +19,46 @@ class CloneS3Command extends Command
     public function handle()
     {
         // Get source and target S3 bucket credentials from config.
-        $sourceBucket = config('porter.s3.source_bucket');
-        $sourceRegion = config('porter.s3.source_region');
+        $sourceBucket    = config('porter.s3.source_bucket');
+        $sourceRegion    = config('porter.s3.source_region');
         $sourceAccessKey = config('porter.s3.source_access_key');
         $sourceSecretKey = config('porter.s3.source_secret_key');
-        $sourceUrl = config('porter.s3.source_url');
-        $sourceEndpoint = config('porter.s3.source_endpoint');  // Adding the endpoint here
+        $sourceUrl       = config('porter.s3.source_url');
+        $sourceEndpoint  = config('porter.s3.source_endpoint');  // Adding the endpoint here
 
-        $targetBucket = config('porter.s3.target_bucket');
-        $targetRegion = config('porter.s3.target_region');
+        $targetBucket    = config('porter.s3.target_bucket');
+        $targetRegion    = config('porter.s3.target_region');
         $targetAccessKey = config('porter.s3.target_access_key');
         $targetSecretKey = config('porter.s3.target_secret_key');
-        $targetUrl = config('porter.s3.target_url');
-        $targetEndpoint = config('porter.s3.target_endpoint');  // Adding the endpoint here
+        $targetUrl       = config('porter.s3.target_url');
+        $targetEndpoint  = config('porter.s3.target_endpoint');  // Adding the endpoint here
 
         // Ensure the source and target buckets are set in the configuration.
         if (!$sourceBucket || !$targetBucket) {
             $this->error('S3 source or target bucket configuration is missing in the .env file.');
+
             return 1;
         }
 
         // Clone the contents from the source bucket to the target bucket.
         $this->cloneS3Bucket(
-            $sourceBucket, $sourceRegion, $sourceAccessKey, $sourceSecretKey, $sourceUrl, $sourceEndpoint,
-            $targetBucket, $targetRegion, $targetAccessKey, $targetSecretKey, $targetUrl, $targetEndpoint
+            $sourceBucket,
+            $sourceRegion,
+            $sourceAccessKey,
+            $sourceSecretKey,
+            $sourceUrl,
+            $sourceEndpoint,
+            $targetBucket,
+            $targetRegion,
+            $targetAccessKey,
+            $targetSecretKey,
+            $targetUrl,
+            $targetEndpoint
         );
 
         // Output success message.
         $this->info("S3 bucket cloning from {$sourceBucket} to {$targetBucket} completed successfully!");
+
         return 0;
     }
 
@@ -71,11 +83,11 @@ class CloneS3Command extends Command
     {
         // Dynamically configure the source S3 disk
         config(['filesystems.disks.s3' => array_merge(config('filesystems.disks.s3'), [
-            'bucket' => $sourceBucket,
-            'region' => $sourceRegion,
-            'key' => $sourceAccessKey,
-            'secret' => $sourceSecretKey,
-            'url' => $sourceUrl,
+            'bucket'   => $sourceBucket,
+            'region'   => $sourceRegion,
+            'key'      => $sourceAccessKey,
+            'secret'   => $sourceSecretKey,
+            'url'      => $sourceUrl,
             'endpoint' => $sourceEndpoint, // Use the custom endpoint for the source
         ])]);
 
@@ -83,11 +95,11 @@ class CloneS3Command extends Command
 
         // Dynamically configure the target S3 disk
         config(['filesystems.disks.s3' => array_merge(config('filesystems.disks.s3'), [
-            'bucket' => $targetBucket,
-            'region' => $targetRegion,
-            'key' => $targetAccessKey,
-            'secret' => $targetSecretKey,
-            'url' => $targetUrl,
+            'bucket'   => $targetBucket,
+            'region'   => $targetRegion,
+            'key'      => $targetAccessKey,
+            'secret'   => $targetSecretKey,
+            'url'      => $targetUrl,
             'endpoint' => $targetEndpoint, // Use the custom endpoint for the target
         ])]);
 
@@ -101,6 +113,7 @@ class CloneS3Command extends Command
             // Check if the file already exists in the target bucket.
             if ($targetStorage->exists($file)) {
                 $this->info("Skipping: {$file} (already exists in target)");
+
                 continue; // Skip this file
             }
 

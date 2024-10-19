@@ -2,8 +2,7 @@
 
 namespace ThinkNeverland\Porter\Services;
 
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\{Storage};
 
 class ImportService
 {
@@ -20,7 +19,7 @@ class ImportService
         }
 
         // Run the MySQL import command to restore the database.
-        $command = "mysql --user=".env('DB_USERNAME')." --password=".env('DB_PASSWORD')." --host=".env('DB_HOST')." ".env('DB_DATABASE')." < $path";
+        $command = "mysql --user=" . env('DB_USERNAME') . " --password=" . env('DB_PASSWORD') . " --host=" . env('DB_HOST') . " " . env('DB_DATABASE') . " < $path";
         exec($command);
     }
 
