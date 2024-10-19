@@ -28,12 +28,12 @@ class ExportService
         // Encrypt the filename for security purposes.
         $encryptedFilename = Crypt::encryptString($filename);
 
-        // Create a temporary file for storing the SQL dump
-        $tempFile = tmpfile(); // Temporary file handle
+        // Use an in-memory stream instead of a temporary file
+        $stream = fopen('php://temp', 'r+');
 
         // Optionally add DROP IF EXISTS statements for each table.
         if ($dropIfExists) {
-            fwrite($tempFile, "-- Add DROP IF EXISTS for each table.\n");
+            fwrite($stream, "-- Add DROP IF EXISTS for each table.\n");
         }
 
         // Get all tables from the database.
@@ -52,49 +52,35 @@ class ExportService
             }
 
             // Export table schema.
-            fwrite($tempFile, $this->exportTableSchema($tableName, $dropIfExists));
+            fwrite($stream, $this->exportTableSchema($tableName, $dropIfExists));
 
             // Export table data.
             if ($modelClass) {
                 // Use model-specific behavior for randomization and omissions.
-                $this->exportTableDataWithModel($modelClass, $tableName, $tempFile, $faker);
+                $this->exportTableDataWithModel($modelClass, $tableName, $stream, $faker);
             } else {
                 // No model found, export data without any custom behavior.
-                $this->exportTableDataWithoutModel($tableName, $tempFile);
+                $this->exportTableDataWithoutModel($tableName, $stream);
             }
         }
 
-        // Rewind the file so it can be read for upload
-        rewind($tempFile);
+        // Rewind the stream so it can be read for upload
+        rewind($stream);
 
-        // If using a remote disk (like S3), upload the file using putStream().
-        if ($this->isRemoteDisk($disk)) {
-            // Stream the file directly to the remote storage (e.g., S3)
-            $disk->put($encryptedFilename, stream_get_contents($tempFile));
+        // Stream the file directly to the remote storage (e.g., S3)
+        $disk->put($encryptedFilename, $stream);
 
-            // Close the temp file
-            fclose($tempFile);
+        // Close the stream
+        fclose($stream);
 
-            // Generate a temporary URL if needed
-            if (!$noExpiration) {
-                return $disk->temporaryUrl($encryptedFilename, now()->addSeconds(config('porter.expiration')));
-            }
-
-            // Return the remote URL
-            return $disk->url($encryptedFilename);
+        // Generate a temporary URL if needed
+        if (!$noExpiration) {
+            return $disk->temporaryUrl($encryptedFilename, now()->addSeconds(config('porter.expiration')));
         }
 
-        // If using local storage, save the temp file to disk
-        $localPath = storage_path("app/{$filename}");
-        file_put_contents($localPath, stream_get_contents($tempFile));
-
-        // Close the temp file
-        fclose($tempFile);
-
-        // Return the local file path as the download link
-        return $localPath;
+        // Return the remote URL
+        return $disk->url($encryptedFilename);
     }
-
     /**
      * Export the table schema.
      *
