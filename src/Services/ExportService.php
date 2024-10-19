@@ -28,53 +28,12 @@ class ExportService
         // Encrypt the filename for security purposes.
         $encryptedFilename = Crypt::encryptString($filename);
 
-        // Check if we're using S3 or another remote storage that supports streaming.
-        if ($disk->getDriver()->getAdapter() instanceof \League\Flysystem\AwsS3V3\AwsS3V3Adapter) {
-            // Stream the export directly to S3
-            $stream = tmpfile(); // Create a temporary file stream in memory
-            $this->writeToStream($stream, $dropIfExists, $faker);
+        // Create a temporary file for storing the SQL dump
+        $tempFile = tmpfile();
 
-            // Write the file to S3 from the stream
-            $disk->putStream($encryptedFilename, $stream);
-
-            // Close the stream
-            fclose($stream);
-
-            // Generate a temporary URL if no expiration is required
-            if (!$noExpiration) {
-                return $disk->temporaryUrl($encryptedFilename, now()->addSeconds(config('porter.expiration')));
-            }
-
-            return $disk->url($encryptedFilename);
-
-        } else {
-            // For local storage, use standard file writing
-            $localPath = storage_path("app/{$filename}");
-            $fileHandle = fopen($localPath, 'w'); // Open local file handle
-
-            // Write the export to the local file
-            $this->writeToStream($fileHandle, $dropIfExists, $faker);
-
-            // Close the file handle
-            fclose($fileHandle);
-
-            // Return the local file path as the download link
-            return $localPath;
-        }
-    }
-
-    /**
-     * Write the SQL export to a stream (supports both S3 and local storage).
-     *
-     * @param resource $stream The stream resource to write to.
-     * @param bool $dropIfExists Whether to add DROP IF EXISTS statements to the SQL file.
-     * @param \Faker\Generator $faker The Faker instance used for randomizing data.
-     */
-    protected function writeToStream($stream, $dropIfExists, $faker)
-    {
         // Optionally add DROP IF EXISTS statements for each table.
         if ($dropIfExists) {
-            fwrite($stream, "-- Add DROP IF EXISTS for each table.\n");
+            fwrite($tempFile, "-- Add DROP IF EXISTS for each table.\n");
         }
 
         // Get all tables from the database.
@@ -93,17 +52,46 @@ class ExportService
             }
 
             // Export table schema.
-            fwrite($stream, $this->exportTableSchema($tableName, $dropIfExists));
+            fwrite($tempFile, $this->exportTableSchema($tableName, $dropIfExists));
 
             // Export table data.
             if ($modelClass) {
                 // Use model-specific behavior for randomization and omissions.
-                $this->exportTableDataWithModel($modelClass, $tableName, $stream, $faker);
+                $this->exportTableDataWithModel($modelClass, $tableName, $tempFile, $faker);
             } else {
                 // No model found, export data without any custom behavior.
-                $this->exportTableDataWithoutModel($tableName, $stream);
+                $this->exportTableDataWithoutModel($tableName, $tempFile);
             }
         }
+
+        // Rewind the file so it can be read for upload
+        rewind($tempFile);
+
+        // If using remote storage (S3, etc.), upload the file directly from the stream.
+        if ($disk->getDriver()->supportsVisibility()) {
+            // Upload to S3 or remote disk using putStream()
+            $disk->putStream($encryptedFilename, $tempFile);
+
+            // Close the temp file
+            fclose($tempFile);
+
+            // Generate a temporary URL if required
+            if (!$noExpiration) {
+                return $disk->temporaryUrl($encryptedFilename, now()->addSeconds(config('porter.expiration')));
+            }
+
+            return $disk->url($encryptedFilename);
+        }
+
+        // If using local storage, save the temp file to disk
+        $localPath = storage_path("app/{$filename}");
+        file_put_contents($localPath, stream_get_contents($tempFile));
+
+        // Close the temp file
+        fclose($tempFile);
+
+        // Return the local path for the exported file
+        return $localPath;
     }
 
     /**
