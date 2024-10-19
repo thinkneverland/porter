@@ -19,68 +19,52 @@ class ExportService
      */
     public function exportDatabase($filename, $dropIfExists, $noExpiration)
     {
-        // Initialize Faker for data randomization.
-        $faker = Faker::create();
-
-        // Determine which disk to use (S3 or local).
-        $disk = Storage::disk(config('filesystems.default'));
-
-        // Encrypt the filename for security purposes.
+        $faker             = Faker::create();
+        $disk              = Storage::disk(config('filesystems.default'));
         $encryptedFilename = Crypt::encryptString($filename);
 
-        // Use an in-memory stream instead of a temporary file
+        // Create a memory stream
         $stream = fopen('php://temp', 'r+');
 
-        // Optionally add DROP IF EXISTS statements for each table.
         if ($dropIfExists) {
             fwrite($stream, "-- Add DROP IF EXISTS for each table.\n");
         }
 
-        // Get all tables from the database.
         $tables = DB::select('SHOW TABLES');
 
-        // Loop through all tables in the database.
         foreach ($tables as $table) {
-            $tableName = array_values((array) $table)[0];
-
-            // Try to find a corresponding model for the table.
+            $tableName  = array_values((array) $table)[0];
             $modelClass = $this->getModelForTable($tableName);
 
-            // Check if the model has a skip property ($ignoreFromPorter), if so, skip it.
             if ($modelClass && $this->shouldIgnoreModel($modelClass)) {
-                continue; // Skip this table if it's marked to be ignored by the model.
+                continue;
             }
 
-            // Export table schema.
             fwrite($stream, $this->exportTableSchema($tableName, $dropIfExists));
 
-            // Export table data.
             if ($modelClass) {
-                // Use model-specific behavior for randomization and omissions.
                 $this->exportTableDataWithModel($modelClass, $tableName, $stream, $faker);
             } else {
-                // No model found, export data without any custom behavior.
                 $this->exportTableDataWithoutModel($tableName, $stream);
             }
         }
 
-        // Rewind the stream so it can be read for upload
+        // Rewind the stream to the beginning
         rewind($stream);
 
-        // Stream the file directly to the remote storage (e.g., S3)
-        $disk->put($encryptedFilename, $stream);
+        // Use writeStream to upload the file to the disk
+        $disk->writeStream($encryptedFilename, $stream);
 
-        // Close the stream
+        // Close the memory stream
         fclose($stream);
 
-        // Generate a temporary URL if needed
         if (!$noExpiration) {
             return $disk->temporaryUrl($encryptedFilename, now()->addSeconds(config('porter.expiration')));
         }
 
-        // Return the remote URL
         return $disk->url($encryptedFilename);
     }
+
     /**
      * Export the table schema.
      *
