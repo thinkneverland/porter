@@ -6,6 +6,7 @@ use Illuminate\Support\ServiceProvider;
 use ThinkNeverland\Porter\Commands\ExportCommand;
 use ThinkNeverland\Porter\Commands\ImportCommand;
 use ThinkNeverland\Porter\Commands\CloneS3Command;
+use ThinkNeverland\Porter\Commands\InstallCommand;
 
 class PorterServiceProvider extends ServiceProvider
 {
@@ -29,6 +30,7 @@ class PorterServiceProvider extends ServiceProvider
                 ExportCommand::class,
                 ImportCommand::class,
                 CloneS3Command::class,
+                InstallCommand::class
             ]);
         }
 
