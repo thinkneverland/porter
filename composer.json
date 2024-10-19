@@ -1,18 +1,17 @@
 {
     "name": "thinkneverland/porter",
-    "description": "A database export/import and S3 cloning tool for Laravel applications.",
-    "require": {
-        "php": "^8.0",
-        "illuminate/support": "^8.0|^9.0|^10.0|^11.0",
-        "league/flysystem": "^3.0",
-        "league/flysystem-aws-s3-v3": "^3.0",
-        "fakerphp/faker": "^1.16",
-        "aws/aws-sdk-php": "^3.0"
-    },
+    "description": "Porter - A Laravel package for data export, import, and S3 management",
+    "type": "library",
+    "license": "MIT",
     "autoload": {
         "psr-4": {
             "ThinkNeverland\\Porter\\": "src/"
         }
+    },
+    "require": {
+        "php": "^8.1",
+        "aws/aws-sdk-php": "^3.0",
+        "laravel/framework": "^10.0"
     },
     "extra": {
         "laravel": {

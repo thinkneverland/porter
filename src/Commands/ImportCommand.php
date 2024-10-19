@@ -3,29 +3,31 @@
 namespace ThinkNeverland\Porter\Commands;
 
 use Illuminate\Console\Command;
-use ThinkNeverland\Porter\Services\PorterService;
+use ThinkNeverland\Porter\Services\ImportService;
 
 class ImportCommand extends Command
 {
-    protected $signature = 'porter:import
-        {file : The path to the SQL file to import}';
+    // Command signature with the path argument for importing SQL files.
+    protected $signature = 'porter:import {path}';
 
-    protected $description = 'Import an SQL file into the database.';
+    // Command description for Artisan.
+    protected $description = 'Import a SQL file into the database';
 
-    protected $importService;
-
-    public function __construct(PorterService $importService)
-    {
-        parent::__construct();
-        $this->importService = $importService;
-    }
-
+    /**
+     * Handle the command execution.
+     */
     public function handle()
     {
-        // Proceed with import
-        $filePath = $this->argument('file');
-        $this->importService->import($filePath);
+        // Retrieve the file path argument passed by the user.
+        $path = $this->argument('path');
 
-        $this->info('Database imported successfully.');
+        // Create an instance of the ImportService.
+        $importService = new ImportService();
+
+        // Call the service to handle the database import.
+        $importService->importDatabase($path);
+
+        // Output a success message to the console.
+        $this->info("Database import completed from: $path");
     }
 }
