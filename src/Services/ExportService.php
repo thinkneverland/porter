@@ -6,14 +6,11 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Faker\Factory as Faker;
-use Symfony\Component\Finder\Finder;
-use Illuminate\Support\Str;
-use Illuminate\Database\Eloquent\Model;
 
 class ExportService
 {
     /**
-     * Export the entire database to a file, apply model-based configurations, and optionally upload it to S3.
+     * Export the entire database to a file, apply model-based configurations, and optionally upload it to S3 or local storage.
      *
      * @param string $filename The name of the file to export.
      * @param bool $dropIfExists Whether to add DROP IF EXISTS statements to the SQL file.
@@ -24,14 +21,60 @@ class ExportService
     {
         // Initialize Faker for data randomization.
         $faker = Faker::create();
-        $path = storage_path("app/{$filename}");
 
-        // Open a file handle for writing SQL.
-        $fileHandle = fopen($path, 'w');
+        // Determine which disk to use (S3 or local).
+        $disk = Storage::disk(config('filesystems.default'));
 
-        // Optionally add DROP IF EXISTS.
+        // Encrypt the filename for security purposes.
+        $encryptedFilename = Crypt::encryptString($filename);
+
+        // Check if we're using S3 or another remote storage that supports streaming.
+        if ($disk->getDriver()->getAdapter() instanceof \League\Flysystem\AwsS3V3\AwsS3V3Adapter) {
+            // Stream the export directly to S3
+            $stream = tmpfile(); // Create a temporary file stream in memory
+            $this->writeToStream($stream, $dropIfExists, $faker);
+
+            // Write the file to S3 from the stream
+            $disk->putStream($encryptedFilename, $stream);
+
+            // Close the stream
+            fclose($stream);
+
+            // Generate a temporary URL if no expiration is required
+            if (!$noExpiration) {
+                return $disk->temporaryUrl($encryptedFilename, now()->addSeconds(config('porter.expiration')));
+            }
+
+            return $disk->url($encryptedFilename);
+
+        } else {
+            // For local storage, use standard file writing
+            $localPath = storage_path("app/{$filename}");
+            $fileHandle = fopen($localPath, 'w'); // Open local file handle
+
+            // Write the export to the local file
+            $this->writeToStream($fileHandle, $dropIfExists, $faker);
+
+            // Close the file handle
+            fclose($fileHandle);
+
+            // Return the local file path as the download link
+            return $localPath;
+        }
+    }
+
+    /**
+     * Write the SQL export to a stream (supports both S3 and local storage).
+     *
+     * @param resource $stream The stream resource to write to.
+     * @param bool $dropIfExists Whether to add DROP IF EXISTS statements to the SQL file.
+     * @param \Faker\Generator $faker The Faker instance used for randomizing data.
+     */
+    protected function writeToStream($stream, $dropIfExists, $faker)
+    {
+        // Optionally add DROP IF EXISTS statements for each table.
         if ($dropIfExists) {
-            fwrite($fileHandle, "-- Add DROP IF EXISTS for each table.\n");
+            fwrite($stream, "-- Add DROP IF EXISTS for each table.\n");
         }
 
         // Get all tables from the database.
@@ -46,33 +89,21 @@ class ExportService
 
             // Check if the model has a skip property ($ignoreFromPorter), if so, skip it.
             if ($modelClass && $this->shouldIgnoreModel($modelClass)) {
-                $this->info("Skipping table: {$tableName} (ignored by model configuration)");
-                continue;
+                continue; // Skip this table if it's marked to be ignored by the model.
             }
 
             // Export table schema.
-            fwrite($fileHandle, $this->exportTableSchema($tableName, $dropIfExists));
+            fwrite($stream, $this->exportTableSchema($tableName, $dropIfExists));
 
             // Export table data.
             if ($modelClass) {
                 // Use model-specific behavior for randomization and omissions.
-                $this->exportTableDataWithModel($modelClass, $tableName, $fileHandle, $faker);
+                $this->exportTableDataWithModel($modelClass, $tableName, $stream, $faker);
             } else {
                 // No model found, export data without any custom behavior.
-                $this->exportTableDataWithoutModel($tableName, $fileHandle);
+                $this->exportTableDataWithoutModel($tableName, $stream);
             }
         }
-
-        // Close the file handle.
-        fclose($fileHandle);
-
-        // Upload to S3 using Laravel's default S3 configuration.
-        $bucket = config('filesystems.disks.s3.bucket');
-        if ($bucket) {
-            return $this->uploadToS3($filename, $path, $noExpiration);
-        }
-
-        return null;
     }
 
     /**
@@ -102,19 +133,19 @@ class ExportService
      *
      * @param string $modelClass The corresponding Eloquent model for the table.
      * @param string $tableName The table name.
-     * @param resource $fileHandle The file handle to write to.
+     * @param resource $stream The file stream to write to (S3 or local).
      * @param \Faker\Generator $faker The Faker instance used for randomizing data.
      */
-    protected function exportTableDataWithModel($modelClass, $tableName, $fileHandle, $faker)
+    protected function exportTableDataWithModel($modelClass, $tableName, $stream, $faker)
     {
-        fwrite($fileHandle, "-- Exporting data for table: {$tableName} (using model-specific rules)\n");
+        fwrite($stream, "-- Exporting data for table: {$tableName} (using model-specific rules)\n");
 
         $data = DB::table($tableName)->get();
 
         foreach ($data as $row) {
             // Check if the row is marked to not be randomized (if the model defines keepForPorter).
             if (isset($modelClass::$keepForPorter) && in_array($row->id, $modelClass::$keepForPorter)) {
-                $this->writeInsertStatement($fileHandle, $tableName, (array) $row);
+                $this->writeInsertStatement($stream, $tableName, (array) $row);
                 continue;
             }
 
@@ -125,68 +156,44 @@ class ExportService
                 }
             }
 
-            $this->writeInsertStatement($fileHandle, $tableName, (array) $row);
+            $this->writeInsertStatement($stream, $tableName, (array) $row);
         }
 
-        fwrite($fileHandle, "\n");
+        fwrite($stream, "\n");
     }
 
     /**
      * Export table data without any model-specific behavior.
      *
      * @param string $tableName The table name.
-     * @param resource $fileHandle The file handle to write to.
+     * @param resource $stream The file stream to write to (S3 or local).
      */
-    protected function exportTableDataWithoutModel($tableName, $fileHandle)
+    protected function exportTableDataWithoutModel($tableName, $stream)
     {
-        fwrite($fileHandle, "-- Exporting data for table: {$tableName} (no model found)\n");
+        fwrite($stream, "-- Exporting data for table: {$tableName} (no model found)\n");
 
         $data = DB::table($tableName)->get();
 
         foreach ($data as $row) {
-            $this->writeInsertStatement($fileHandle, $tableName, (array) $row);
+            $this->writeInsertStatement($stream, $tableName, (array) $row);
         }
 
-        fwrite($fileHandle, "\n");
+        fwrite($stream, "\n");
     }
 
     /**
      * Write an INSERT statement for a row of data.
      *
-     * @param resource $fileHandle The file handle to write to.
+     * @param resource $stream The file stream to write to (S3 or local).
      * @param string $tableName The table name.
      * @param array $row The row data as an associative array.
      */
-    protected function writeInsertStatement($fileHandle, $tableName, array $row)
+    protected function writeInsertStatement($stream, $tableName, array $row)
     {
         $columns = implode('`, `', array_keys($row));
         $values = implode("', '", array_map('addslashes', array_values($row)));
 
-        fwrite($fileHandle, "INSERT INTO `{$tableName}` (`{$columns}`) VALUES ('{$values}');\n");
-    }
-
-    /**
-     * Upload the exported database file to S3 and optionally create a temporary URL.
-     *
-     * @param string $filename The name of the file to upload.
-     * @param string $localPath The local path of the exported SQL file.
-     * @param bool $noExpiration Whether the file download link should have no expiration.
-     * @return string|null The download link or null if no link was created.
-     */
-    protected function uploadToS3($filename, $localPath, $noExpiration)
-    {
-        // Encrypt the filename to add an extra layer of security.
-        $encryptedFilename = Crypt::encryptString($filename);
-
-        // Upload the file to S3 using Laravel's default S3 configuration.
-        Storage::disk('s3')->put($encryptedFilename, file_get_contents($localPath));
-
-        // If no expiration is set, create a temporary URL that expires.
-        if (!$noExpiration) {
-            return Storage::disk('s3')->temporaryUrl($encryptedFilename, now()->addSeconds(config('porter.expiration')));
-        }
-
-        return Storage::disk('s3')->url($encryptedFilename);
+        fwrite($stream, "INSERT INTO `{$tableName}` (`{$columns}`) VALUES ('{$values}');\n");
     }
 
     /**
@@ -244,7 +251,6 @@ class ExportService
      */
     protected function shouldIgnoreModel($modelClass)
     {
-        // Check if the model has the $ignoreFromPorter property, and if so, if it's set to true.
         return isset($modelClass::$ignoreFromPorter) && $modelClass::$ignoreFromPorter === true;
     }
 }
