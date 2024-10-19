@@ -11,7 +11,7 @@ class ExportCommand extends Command
     protected $signature = 'porter:export {filename} {--drop-if-exists} {--no-expiration}';
 
     // Command description for Artisan.
-    protected $description = 'Export the database and optionally upload it to S3';
+    protected $description = 'Export the entire database and optionally upload it to S3, respecting model configurations for skipping, omitting, and randomizing data.';
 
     /**
      * Handle the command execution.
