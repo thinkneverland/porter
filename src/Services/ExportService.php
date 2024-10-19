@@ -2,6 +2,7 @@
 
 namespace ThinkNeverland\Porter\Services;
 
+use Aws\S3\S3Client;
 use Faker\Factory as Faker;
 use Illuminate\Support\Facades\{Crypt, DB, Storage};
 use Illuminate\Support\Str;
@@ -17,52 +18,160 @@ class ExportService
      * @param bool $noExpiration Whether the file download link should have no expiration.
      * @return string|null The download link or null if no link was created.
      */
+
     public function exportDatabase($filename, $dropIfExists, $noExpiration)
     {
         $faker             = Faker::create();
         $disk              = Storage::disk(config('filesystems.default'));
         $encryptedFilename = Crypt::encryptString($filename);
 
-        // Create a memory stream
-        $stream = fopen('php://temp', 'r+');
+        // Fetch the database tables (This should be done regardless of storage type)
+        $tables = DB::select('SHOW TABLES'); // Query to fetch tables
 
-        if ($dropIfExists) {
-            fwrite($stream, "-- Add DROP IF EXISTS for each table.\n");
-        }
+        // If the disk is S3, handle multipart upload directly with AWS SDK
+        if ($this->isRemoteDisk()) {
+            // Initialize S3 client directly from AWS SDK
+            $client = new S3Client([
+                'version'     => 'latest',
+                'region'      => env('AWS_DEFAULT_REGION'),
+                'credentials' => [
+                    'key'    => env('AWS_ACCESS_KEY_ID'),
+                    'secret' => env('AWS_SECRET_ACCESS_KEY'),
+                ],
+            ]);
 
-        $tables = DB::select('SHOW TABLES');
+            $bucket = env('AWS_BUCKET');
+            $key    = $encryptedFilename;
 
-        foreach ($tables as $table) {
-            $tableName  = array_values((array) $table)[0];
-            $modelClass = $this->getModelForTable($tableName);
+            // Start multipart upload
+            $multipart = $client->createMultipartUpload([
+                'Bucket' => $bucket,
+                'Key'    => $key,
+            ]);
 
-            if ($modelClass && $this->shouldIgnoreModel($modelClass)) {
-                continue;
+            $uploadId   = $multipart['UploadId'];
+            $partNumber = 1;
+            $parts      = [];
+            $bufferSize = 1024 * 1024; // 1MB buffer size
+            $tempStream = fopen('php://temp', 'r+'); // Temporary memory stream
+
+            if ($dropIfExists) {
+                fwrite($tempStream, "-- Add DROP IF EXISTS for each table.\n");
             }
 
-            fwrite($stream, $this->exportTableSchema($tableName, $dropIfExists));
+            // Process the database tables
+            foreach ($tables as $table) {
+                $tableName  = array_values((array)$table)[0];
+                $modelClass = $this->getModelForTable($tableName);
 
-            if ($modelClass) {
-                $this->exportTableDataWithModel($modelClass, $tableName, $stream, $faker);
-            } else {
-                $this->exportTableDataWithoutModel($tableName, $stream);
+                if ($modelClass && $this->shouldIgnoreModel($modelClass)) {
+                    continue;
+                }
+
+                // Write table schema
+                fwrite($tempStream, $this->exportTableSchema($tableName, $dropIfExists));
+
+                // Write table data
+                if ($modelClass) {
+                    $this->exportTableDataWithModel($modelClass, $tableName, $tempStream, $faker);
+                } else {
+                    $this->exportTableDataWithoutModel($tableName, $tempStream);
+                }
+
+                // Check if buffer exceeds 1MB and flush
+                if (ftell($tempStream) >= $bufferSize) {
+                    $this->flushToS3($client, $bucket, $key, $tempStream, $uploadId, $partNumber++, $parts);
+                }
             }
+
+            // Final flush if there's remaining data
+            if (ftell($tempStream) > 0) {
+                $this->flushToS3($client, $bucket, $key, $tempStream, $uploadId, $partNumber++, $parts);
+            }
+
+            // Complete the multipart upload
+            $client->completeMultipartUpload([
+                'Bucket'          => $bucket,
+                'Key'             => $key,
+                'UploadId'        => $uploadId,
+                'MultipartUpload' => ['Parts' => $parts],
+            ]);
+
+            fclose($tempStream);
+
+            // Return a temporary or permanent URL
+            if (!$noExpiration) {
+                return $disk->temporaryUrl($encryptedFilename, now()->addSeconds(config('porter.expiration')));
+            }
+
+            return $disk->url($encryptedFilename);
+        } else {
+            // For public/local storage
+            $filePath    = storage_path("app/public/{$encryptedFilename}");
+            $localStream = fopen($filePath, 'w+');
+
+            if ($dropIfExists) {
+                fwrite($localStream, "-- Add DROP IF EXISTS for each table.\n");
+            }
+
+            // Process tables (local handling)
+            foreach ($tables as $table) {
+                $tableName  = array_values((array)$table)[0];
+                $modelClass = $this->getModelForTable($tableName);
+
+                if ($modelClass && $this->shouldIgnoreModel($modelClass)) {
+                    continue;
+                }
+
+                // Write schema and data to local file
+                fwrite($localStream, $this->exportTableSchema($tableName, $dropIfExists));
+
+                if ($modelClass) {
+                    $this->exportTableDataWithModel($modelClass, $tableName, $localStream, $faker);
+                } else {
+                    $this->exportTableDataWithoutModel($tableName, $localStream);
+                }
+            }
+
+            fclose($localStream);
+
+            // Return public URL for local disk
+            return asset("storage/{$encryptedFilename}");
         }
+    }
+    /**
+     * Flush the contents of the temp stream to S3 as a part of multipart upload.
+     */
+    protected function flushToS3($client, $bucket, $key, $tempStream, $uploadId, $partNumber, &$parts)
+    {
+        rewind($tempStream); // Rewind to the beginning
 
-        // Rewind the stream to the beginning
-        rewind($stream);
+        // Upload the part to S3
+        $result = $client->uploadPart([
+            'Bucket'     => $bucket,
+            'Key'        => $key,
+            'UploadId'   => $uploadId,
+            'PartNumber' => $partNumber,
+            'Body'       => stream_get_contents($tempStream),
+        ]);
 
-        // Use writeStream to upload the file to the disk
-        $disk->writeStream($encryptedFilename, $stream);
+        // Save the part information
+        $parts[] = [
+            'PartNumber' => $partNumber,
+            'ETag'       => $result['ETag'],
+        ];
 
-        // Close the memory stream
-        fclose($stream);
+        // Truncate the stream (clear the buffer)
+        ftruncate($tempStream, 0);
+        rewind($tempStream); // Prepare for next part
+    }
 
-        if (!$noExpiration) {
-            return $disk->temporaryUrl($encryptedFilename, now()->addSeconds(config('porter.expiration')));
-        }
-
-        return $disk->url($encryptedFilename);
+    /**
+     * Check if the current disk is S3.
+     */
+    protected function isRemoteDisk()
+    {
+        return config('filesystems.default') === 's3';
     }
 
     /**
@@ -213,17 +322,5 @@ class ExportService
     protected function shouldIgnoreModel($modelClass)
     {
         return isset($modelClass::$ignoreFromPorter) && $modelClass::$ignoreFromPorter === true;
-    }
-
-    /**
-     * Check if the current disk is a remote disk (e.g., S3).
-     *
-     * @param \Illuminate\Contracts\Filesystem\Filesystem $disk
-     * @return bool True if the disk is remote, false if local.
-     */
-    protected function isRemoteDisk($disk)
-    {
-        // This works for remote disks like S3
-        return $disk->getDriver() instanceof \League\Flysystem\FilesystemOperator;
     }
 }
