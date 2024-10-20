@@ -18,5 +18,17 @@ return [
         'source_url'        => env('AWS_SOURCE_URL'),
         'source_endpoint'   => env('AWS_SOURCE_ENDPOINT', null),  // Endpoint for source (optional)
     ],
-    'expiration' => env('PORTER_LINK_EXPIRATION', 3600), // Expiration time for temporary URLs (in seconds)
+
+    // Alternate S3 Export Configuration
+    'alt_s3' => [
+        'enabled' => env('EXPORT_AWS_ENABLED', false),
+        'bucket' => env('EXPORT_AWS_BUCKET', null),
+        'region' => env('EXPORT_AWS_REGION', null),
+        'access_key' => env('EXPORT_AWS_ACCESS_KEY_ID', null),
+        'secret_key' => env('EXPORT_AWS_SECRET_ACCESS_KEY', null),
+        'url' => env('EXPORT_AWS_URL', null),
+        'endpoint' => env('EXPORT_AWS_ENDPOINT', null), // Optional for custom S3 services like MinIO
+    ],
+
+    'expiration' => env('EXPORT_AWS_EXPIRATION', 3600),  // Expiration time in seconds
 ];

@@ -32,20 +32,23 @@ class ExportService
         // Fetch the list of all tables in the database
         $tables = DB::select('SHOW TABLES');
 
-        // Check if the storage disk is remote (S3)
-        if ($this->isRemoteDisk()) {
+        // Check if the alternate S3 configuration is enabled
+        $altS3Enabled = env('EXPORT_AWS_ENABLED', false);
+
+        if ($this->isRemoteDisk() || $altS3Enabled) {
             // Initialize the S3 client with credentials
             $client = new S3Client([
                 'version'     => 'latest',
-                'region'      => env('AWS_DEFAULT_REGION'),
+                'region'      => $altS3Enabled ? env('EXPORT_AWS_REGION') : env('AWS_DEFAULT_REGION'),
                 'credentials' => [
-                    'key'    => env('AWS_ACCESS_KEY_ID'),
-                    'secret' => env('AWS_SECRET_ACCESS_KEY'),
+                    'key'    => $altS3Enabled ? env('EXPORT_AWS_ACCESS_KEY_ID') : env('AWS_ACCESS_KEY_ID'),
+                    'secret' => $altS3Enabled ? env('EXPORT_AWS_SECRET_ACCESS_KEY') : env('AWS_SECRET_ACCESS_KEY'),
                 ],
+                'endpoint'    => $altS3Enabled ? env('EXPORT_AWS_ENDPOINT') : null,
             ]);
 
             // Get the S3 bucket name and set the key for the file
-            $bucket = env('AWS_BUCKET');
+            $bucket = $altS3Enabled ? env('EXPORT_AWS_BUCKET') : env('AWS_BUCKET');
             $key    = $encryptedFilename;
 
             // Start a multipart upload to S3
@@ -109,8 +112,9 @@ class ExportService
             fclose($tempStream);
 
             // Generate a temporary or permanent URL for the file
+            $expiration = env('EXPORT_AWS_EXPIRATION', 3600);
             if (!$noExpiration) {
-                $url = $disk->temporaryUrl($encryptedFilename, now()->addMinutes(30));
+                $url = $disk->temporaryUrl($encryptedFilename, now()->addSeconds($expiration));
             } else {
                 $url = $disk->url($encryptedFilename);
             }
