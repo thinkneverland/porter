@@ -18,19 +18,23 @@ class ExportService
      * @param bool $noExpiration Whether the file download link should have no expiration.
      * @return string|null The download link or null if no link was created.
      */
-
     public function exportDatabase($filename, $dropIfExists, $noExpiration)
     {
-        $faker             = Faker::create();
-        $disk              = Storage::disk(config('filesystems.default'));
+        // Create a Faker instance for generating fake data
+        $faker = Faker::create();
+
+        // Get the storage disk configuration
+        $disk = Storage::disk(config('filesystems.default'));
+
+        // Encrypt the filename for security
         $encryptedFilename = Crypt::encryptString($filename);
 
-        // Fetch the database tables
+        // Fetch the list of all tables in the database
         $tables = DB::select('SHOW TABLES');
 
-        // If the disk is S3, handle multipart upload directly with AWS SDK
+        // Check if the storage disk is remote (S3)
         if ($this->isRemoteDisk()) {
-            // Initialize S3 client directly from AWS SDK
+            // Initialize the S3 client with credentials
             $client = new S3Client([
                 'version'     => 'latest',
                 'region'      => env('AWS_DEFAULT_REGION'),
@@ -40,51 +44,56 @@ class ExportService
                 ],
             ]);
 
+            // Get the S3 bucket name and set the key for the file
             $bucket = env('AWS_BUCKET');
             $key    = $encryptedFilename;
 
-            // Start multipart upload
+            // Start a multipart upload to S3
             $multipart = $client->createMultipartUpload([
                 'Bucket' => $bucket,
                 'Key'    => $key,
             ]);
 
+            // Initialize variables for multipart upload
             $uploadId   = $multipart['UploadId'];
             $partNumber = 1;
             $parts      = [];
             $bufferSize = 1024 * 1024; // 1MB buffer size
-            $tempStream = fopen('php://temp', 'r+'); // Temporary memory stream
+            $tempStream = fopen('php://temp', 'r+');
 
+            // Optionally add DROP IF EXISTS statements
             if ($dropIfExists) {
                 fwrite($tempStream, "-- Add DROP IF EXISTS for each table.\n");
             }
 
-            // Process the database tables
+            // Iterate over each table to export its schema and data
             foreach ($tables as $table) {
                 $tableName  = array_values((array)$table)[0];
                 $modelClass = $this->getModelForTable($tableName);
 
+                // Skip tables that should be ignored
                 if ($modelClass && $this->shouldIgnoreModel($modelClass)) {
                     continue;
                 }
 
-                // Write table schema
+                // Write the table schema to the temporary stream
                 fwrite($tempStream, $this->exportTableSchema($tableName, $dropIfExists));
 
-                // Write table data
-                if ($modelClass) {
-                    $this->exportTableDataWithModel($modelClass, $tableName, $tempStream, $faker);
-                } else {
-                    $this->exportTableDataWithoutModel($tableName, $tempStream);
-                }
+                // Get a generator for the table data
+                $dataGenerator = $this->getTableDataGenerator($tableName, $modelClass, $faker);
 
-                // Check if buffer exceeds 1MB and flush
-                if (ftell($tempStream) >= $bufferSize) {
-                    $this->flushToS3($client, $bucket, $key, $tempStream, $uploadId, $partNumber++, $parts);
+                // Write each row of data to the temporary stream
+                foreach ($dataGenerator as $row) {
+                    fwrite($tempStream, $row);
+
+                    // Flush to S3 if the buffer size is exceeded
+                    if (ftell($tempStream) >= $bufferSize) {
+                        $this->flushToS3($client, $bucket, $key, $tempStream, $uploadId, $partNumber++, $parts);
+                    }
                 }
             }
 
-            // Final flush if there's remaining data
+            // Flush any remaining data to S3
             if (ftell($tempStream) > 0) {
                 $this->flushToS3($client, $bucket, $key, $tempStream, $uploadId, $partNumber++, $parts);
             }
@@ -99,60 +108,69 @@ class ExportService
 
             fclose($tempStream);
 
-            // Generate URL for S3
+            // Generate a temporary or permanent URL for the file
             if (!$noExpiration) {
-                // Generate a temporary signed URL (e.g., valid for 30 minutes)
                 $url = $disk->temporaryUrl($encryptedFilename, now()->addMinutes(30));
             } else {
-                // Generate a public URL if the file is public
                 $url = $disk->url($encryptedFilename);
             }
 
-            // Return the correct URL for S3
             return $url;
         } else {
-            // For public/local storage
+            // Handle local storage
             $filePath    = storage_path("app/public/{$encryptedFilename}");
             $localStream = fopen($filePath, 'w+');
 
+            // Optionally add DROP IF EXISTS statements
             if ($dropIfExists) {
                 fwrite($localStream, "-- Add DROP IF EXISTS for each table.\n");
             }
 
-            // Process tables (local handling)
+            // Iterate over each table to export its schema and data
             foreach ($tables as $table) {
                 $tableName  = array_values((array)$table)[0];
                 $modelClass = $this->getModelForTable($tableName);
 
+                // Skip tables that should be ignored
                 if ($modelClass && $this->shouldIgnoreModel($modelClass)) {
                     continue;
                 }
 
-                // Write schema and data to local file
+                // Write the table schema to the local stream
                 fwrite($localStream, $this->exportTableSchema($tableName, $dropIfExists));
 
-                if ($modelClass) {
-                    $this->exportTableDataWithModel($modelClass, $tableName, $localStream, $faker);
-                } else {
-                    $this->exportTableDataWithoutModel($tableName, $localStream);
+                // Get a generator for the table data
+                $dataGenerator = $this->getTableDataGenerator($tableName, $modelClass, $faker);
+
+                // Write each row of data to the local stream
+                foreach ($dataGenerator as $row) {
+                    fwrite($localStream, $row);
                 }
             }
 
             fclose($localStream);
 
-            // Return public URL for local disk
+            // Return the URL to access the file
             return asset("storage/{$encryptedFilename}");
         }
     }
 
     /**
-     * Flush the contents of the temp stream to S3 as a part of multipart upload.
+     * Flush the contents of the temporary stream to S3 as a part of the multipart upload.
+     *
+     * @param S3Client $client The S3 client.
+     * @param string $bucket The S3 bucket name.
+     * @param string $key The S3 object key.
+     * @param resource $tempStream The temporary stream containing data.
+     * @param string $uploadId The upload ID for the multipart upload.
+     * @param int $partNumber The part number for the upload.
+     * @param array &$parts The array of parts uploaded.
      */
     protected function flushToS3($client, $bucket, $key, $tempStream, $uploadId, $partNumber, &$parts)
     {
-        rewind($tempStream); // Rewind to the beginning
+        rewind($tempStream);
 
-        // Upload the part to S3
+        // Upload the current part to S3
         $result = $client->uploadPart([
             'Bucket'     => $bucket,
             'Key'        => $key,
@@ -161,19 +179,21 @@ class ExportService
             'Body'       => stream_get_contents($tempStream),
         ]);
 
-        // Save the part information
+        // Store the part information for completing the upload
         $parts[] = [
             'PartNumber' => $partNumber,
             'ETag'       => $result['ETag'],
         ];
 
-        // Truncate the stream (clear the buffer)
+        // Clear the temporary stream for the next part
         ftruncate($tempStream, 0);
-        rewind($tempStream); // Prepare for next part
+        rewind($tempStream);
     }
 
     /**
-     * Check if the current disk is S3.
+     * Determine if the current storage disk is remote (S3).
+     *
+     * @return bool True if the storage disk is S3, false otherwise.
      */
     protected function isRemoteDisk()
     {
@@ -181,11 +201,11 @@ class ExportService
     }
 
     /**
-     * Export the table schema.
+     * Export the schema of a given table.
      *
      * @param string $tableName The name of the table.
-     * @param bool $dropIfExists Whether to include DROP IF EXISTS statements.
-     * @return string The SQL schema export string.
+     * @param bool $dropIfExists Whether to include a DROP IF EXISTS statement.
+     * @return string The SQL schema for the table.
      */
     protected function exportTableSchema($tableName, $dropIfExists)
     {
@@ -195,7 +215,7 @@ class ExportService
             $schema .= "DROP TABLE IF EXISTS `{$tableName}`;\n";
         }
 
-        // Get the schema of the table.
+        // Get the CREATE TABLE statement for the table
         $createTableQuery = DB::select("SHOW CREATE TABLE {$tableName}")[0]->{'Create Table'};
         $schema .= "{$createTableQuery};\n\n";
 
@@ -203,79 +223,59 @@ class ExportService
     }
 
     /**
-     * Export table data, applying model-specific randomization and column omissions.
+     * Get a generator for the data of a given table.
      *
-     * @param string $modelClass The corresponding Eloquent model for the table.
-     * @param string $tableName The table name.
-     * @param resource $stream The file stream to write to (S3 or local).
-     * @param \Faker\Generator $faker The Faker instance used for randomizing data.
+     * @param string $tableName The name of the table.
+     * @param string|null $modelClass The model class associated with the table.
+     * @param \Faker\Generator $faker The Faker instance for generating fake data.
+     * @return \Generator A generator yielding SQL insert statements for the table data.
      */
-    protected function exportTableDataWithModel($modelClass, $tableName, $stream, $faker)
+    protected function getTableDataGenerator($tableName, $modelClass, $faker)
     {
-        fwrite($stream, "-- Exporting data for table: {$tableName} (using model-specific rules)\n");
-
-        $data = DB::table($tableName)->get();
+        // Use a cursor to iterate over the table data without loading it all into memory
+        $data = DB::table($tableName)->cursor();
 
         foreach ($data as $row) {
-            // Check if the row is marked to not be randomized (if the model defines keepForPorter).
-            if (isset($modelClass::$keepForPorter) && in_array($row->id, $modelClass::$keepForPorter)) {
-                $this->writeInsertStatement($stream, $tableName, (array) $row);
+            if ($modelClass) {
+                // Check if the row should be kept as is
+                if (isset($modelClass::$keepForPorter) && in_array($row->id, $modelClass::$keepForPorter)) {
+                    yield $this->generateInsertStatement($tableName, (array) $row);
+                    continue;
+                }
 
-                continue;
-            }
-
-            // Randomize columns as defined in the model.
-            foreach ($row as $key => $value) {
-                if (in_array($key, $modelClass::$omittedFromPorter ?? [])) {
-                    $row->{$key} = $faker->word; // Example randomization, can be more sophisticated.
+                // Replace omitted fields with fake data
+                foreach ($row as $key => $value) {
+                    if (in_array($key, $modelClass::$omittedFromPorter ?? [])) {
+                        $row->{$key} = $faker->word;
+                    }
                 }
             }
 
-            $this->writeInsertStatement($stream, $tableName, (array) $row);
+            // Yield the insert statement for the current row
+            yield $this->generateInsertStatement($tableName, (array) $row);
         }
-
-        fwrite($stream, "\n");
     }
 
     /**
-     * Export table data without any model-specific behavior.
+     * Generate an SQL insert statement for a given row of data.
      *
-     * @param string $tableName The table name.
-     * @param resource $stream The file stream to write to (S3 or local).
-     */
-    protected function exportTableDataWithoutModel($tableName, $stream)
-    {
-        fwrite($stream, "-- Exporting data for table: {$tableName} (no model found)\n");
-
-        $data = DB::table($tableName)->get();
-
-        foreach ($data as $row) {
-            $this->writeInsertStatement($stream, $tableName, (array) $row);
-        }
-
-        fwrite($stream, "\n");
-    }
-
-    /**
-     * Write an INSERT statement for a row of data.
-     *
-     * @param resource $stream The file stream to write to (S3 or local).
-     * @param string $tableName The table name.
+     * @param string $tableName The name of the table.
      * @param array $row The row data as an associative array.
+     * @return string The SQL insert statement.
      */
-    protected function writeInsertStatement($stream, $tableName, array $row)
+    protected function generateInsertStatement($tableName, array $row)
     {
         $columns = implode('`, `', array_keys($row));
         $values  = implode("', '", array_map('addslashes', array_values($row)));
 
-        fwrite($stream, "INSERT INTO `{$tableName}` (`{$columns}`) VALUES ('{$values}');\n");
+        return "INSERT INTO `{$tableName}` (`{$columns}`) VALUES ('{$values}');\n";
     }
 
     /**
-     * Dynamically find the model class that corresponds to a given table.
+     * Get the model class associated with a given table.
      *
-     * @param string $tableName The name of the table to match.
-     * @return string|null The model class name or null if no matching model is found.
+     * @param string $tableName The name of the table.
+     * @return string|null The model class name or null if no model is found.
      */
     protected function getModelForTable($tableName)
     {
@@ -293,9 +293,9 @@ class ExportService
     }
 
     /**
-     * Dynamically retrieve all Eloquent models in the application.
+     * Get all model classes in the application.
      *
-     * @return array The list of model class names.
+     * @return array An array of model class names.
      */
     protected function getAllModels()
     {
@@ -303,9 +303,9 @@ class ExportService
         $namespace = app()->getNamespace();
         $modelPath = app_path('Models');
 
-        // Use Symfony's Finder component to scan all files in the app/Models directory
         $finder = new Finder();
 
+        // Find all PHP files in the Models directory
         foreach ($finder->files()->in($modelPath)->name('*.php') as $file) {
             $relativePath = str_replace('/', '\\', $file->getRelativePathname());
             $class        = $namespace . 'Models\\' . Str::replaceLast('.php', '', $relativePath);
@@ -319,10 +319,9 @@ class ExportService
     }
 
     /**
-     * Check if the model should be ignored in the export process.
-     * Use property_exists() to check for the $ignoreFromPorter property.
+     * Determine if a model should be ignored during export.
      *
-     * @param string $modelClass The class of the model to check.
+     * @param string $modelClass The model class name.
      * @return bool True if the model should be ignored, false otherwise.
      */
     protected function shouldIgnoreModel($modelClass)
