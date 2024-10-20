@@ -61,7 +61,7 @@ class ExportService
                 $uploadId   = $multipart['UploadId'];
                 $partNumber = 1;
                 $parts      = [];
-                $bufferSize = 1024 * 1024; // 1 MB buffer for multipart upload
+                $bufferSize = 5 * 1024 * 1024; // 5 MB buffer for multipart upload
                 $tempStream = fopen('php://temp', 'r+');
 
                 // Write to temp stream with DROP IF EXISTS (if needed)
