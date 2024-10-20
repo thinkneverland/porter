@@ -12,7 +12,7 @@ return [
 
         // Source bucket (used only for cloning operations)
         'source_bucket'     => env('AWS_SOURCE_BUCKET'),
-        'source_region'     => env('AWS_SOURCE_DEFAULT_REGION'),
+        'source_region'     => env('AWS_SOURCE_REGION'),
         'source_access_key' => env('AWS_SOURCE_ACCESS_KEY_ID'),
         'source_secret_key' => env('AWS_SOURCE_SECRET_ACCESS_KEY'),
         'source_url'        => env('AWS_SOURCE_URL'),
@@ -21,13 +21,13 @@ return [
 
     // Alternate S3 Export Configuration
     'alt_s3' => [
-        'enabled' => env('EXPORT_AWS_ENABLED', false),
-        'bucket' => env('EXPORT_AWS_BUCKET', null),
-        'region' => env('EXPORT_AWS_REGION', null),
+        'enabled'    => env('EXPORT_AWS_ENABLED', false),
+        'bucket'     => env('EXPORT_AWS_BUCKET', null),
+        'region'     => env('EXPORT_AWS_REGION', null),
         'access_key' => env('EXPORT_AWS_ACCESS_KEY_ID', null),
         'secret_key' => env('EXPORT_AWS_SECRET_ACCESS_KEY', null),
-        'url' => env('EXPORT_AWS_URL', null),
-        'endpoint' => env('EXPORT_AWS_ENDPOINT', null), // Optional for custom S3 services like MinIO
+        'url'        => env('EXPORT_AWS_URL', null),
+        'endpoint'   => env('EXPORT_AWS_ENDPOINT', null), // Optional for custom S3 services like MinIO
     ],
 
     'expiration' => env('EXPORT_AWS_EXPIRATION', 3600),  // Expiration time in seconds
