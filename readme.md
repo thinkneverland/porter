@@ -1,3 +1,4 @@
+
 # Porter Package Documentation
 
 ## Overview
@@ -19,7 +20,7 @@ This command will publish the configuration file, allow you to set S3 credential
 php artisan porter:install
 ```
 
-During installation, you'll be prompted to provide S3 credentials for both primary and secondary S3 buckets. These will be stored in your `.env` file if not already set.
+During installation, you'll be prompted to provide S3 credentials for both primary and alternative (secondary) S3 buckets. These will be stored in your `.env` file if not already set.
 
 ## Configuration
 
@@ -27,34 +28,80 @@ The Porter package uses a configuration file located at `config/porter.php` afte
 
 If you wish to configure Porter manually instead of using the install command, you can do so by editing the `config/porter.php` file.
 
-### S3 Storage Settings
+### S3 Storage Settings for Cloning
 
-Primary and secondary S3 buckets can be configured in the `porter.php` config file:
+Primary and alternative S3 buckets for cloning operations can be configured in the `porter.php` config file:
 
 ```php
-'primaryS3' => [
-    'bucket' => env('AWS_BUCKET'),
-    'region' => env('AWS_DEFAULT_REGION'),
-    'key' => env('AWS_ACCESS_KEY_ID'),
-    'secret' => env('AWS_SECRET_ACCESS_KEY'),
-    'url' => env('AWS_URL'),
-    'endpoint' => env('AWS_ENDPOINT'),
-    'use_path_style' => env('AWS_USE_PATH_STYLE_ENDPOINT', false),
-],
-'sourceS3' => [
-    'bucket' => env('AWS_SOURCE_BUCKET'),
-    'region' => env('AWS_SOURCE_REGION'),
-    'key' => env('AWS_SOURCE_ACCESS_KEY_ID'),
-    'secret' => env('AWS_SOURCE_SECRET_ACCESS_KEY'),
-    'url' => env('AWS_SOURCE_URL'),
-    'endpoint' => env('AWS_SOURCE_ENDPOINT'),
-    'use_path_style' => env('AWS_SOURCE_USE_PATH_STYLE_ENDPOINT', false),
-],
+<?php
+
+return [
+    's3' => [
+        // Target bucket (used only for cloning operations)
+        'target_bucket'     => env('AWS_BUCKET'),
+        'target_region'     => env('AWS_DEFAULT_REGION'),
+        'target_access_key' => env('AWS_ACCESS_KEY_ID'),
+        'target_secret_key' => env('AWS_SECRET_ACCESS_KEY'),
+        'target_url'        => env('AWS_URL'),
+        'target_endpoint'   => env('AWS_ENDPOINT', null),  // Endpoint for target (optional)
+
+        // Source bucket (used only for cloning operations)
+        'source_bucket'     => env('AWS_SOURCE_BUCKET'),
+        'source_region'     => env('AWS_SOURCE_REGION'),
+        'source_access_key' => env('AWS_SOURCE_ACCESS_KEY_ID'),
+        'source_secret_key' => env('AWS_SOURCE_SECRET_ACCESS_KEY'),
+        'source_url'        => env('AWS_SOURCE_URL'),
+        'source_endpoint'   => env('AWS_SOURCE_ENDPOINT', null),  // Endpoint for source (optional)
+    ],
+
+    // Alternate S3 Export Configuration
+    'alt_s3' => [
+        'enabled'    => env('EXPORT_AWS_ENABLED', false),
+        'bucket'     => env('EXPORT_AWS_BUCKET', null),
+        'region'     => env('EXPORT_AWS_REGION', null),
+        'access_key' => env('EXPORT_AWS_ACCESS_KEY_ID', null),
+        'secret_key' => env('EXPORT_AWS_SECRET_ACCESS_KEY', null),
+        'url'        => env('EXPORT_AWS_URL', null),
+        'endpoint'   => env('EXPORT_AWS_ENDPOINT', null), // Optional for custom S3 services like MinIO
+    ],
+
+    'expiration' => env('EXPORT_AWS_EXPIRATION', 3600),  // Expiration time in seconds
+];
+
 ```
+
+Make sure to set these values in your `.env` file if you wish to enable exporting to an alternative S3 bucket.
+
+### IAM Policy Updates for S3 Multipart Uploads
+
+Due to the addition of multipart uploads to S3, your IAM policies need to be updated to support this functionality. Ensure the following actions are allowed in your IAM policies for both the primary and alternative S3 buckets:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:AbortMultipartUpload",
+        "s3:ListMultipartUploadParts",
+        "s3:PutObject",
+        "s3:PutObjectAcl"
+      ],
+      "Resource": [
+        "arn:aws:s3:::your-primary-bucket-name/*",
+        "arn:aws:s3:::your-alternative-bucket-name/*"
+      ]
+    }
+  ]
+}
+```
+
+Make sure to replace `your-primary-bucket-name` and `your-alternative-bucket-name` with the appropriate bucket names. This policy ensures that Porter can manage multipart uploads effectively, which is particularly important for handling large file transfers.
 
 ## Exporting Database
 
-The `porter:export` command exports the database into an SQL file. This can be stored locally or on S3, depending on your configuration.
+The `porter:export` command exports the database into an SQL file. This can be stored locally or on the primary or alternative S3 bucket, depending on your configuration.
 
 ### Usage:
 ```bash
@@ -67,8 +114,8 @@ php artisan porter:export export.sql --drop-if-exists
 ```
 
 #### Flags:
-- `--drop-if-exists` : Includes `DROP TABLE IF EXISTS` for all tables in the export file.
-- `--keep-if-exists` : Ensures that `IF EXISTS` is kept for all tables.
+- `--drop-if-exists`: Includes `DROP TABLE IF EXISTS` for all tables in the export file.
+- `--keep-if-exists`: Ensures that `IF EXISTS` is kept for all tables.
 - After export, a temporary download link is generated that expires after 30 minutes. The exported file is deleted after expiration.
 
 #### Example Output:
@@ -105,7 +152,7 @@ The `clone-s3` command allows you to clone content between S3 buckets as defined
 php artisan porter:clone-s3
 ```
 
-This will clone files from the source bucket to the target bucket as defined in your `.env` configuration.
+This will clone files from the source bucket to the target bucket as defined in your `.env` configuration, including support for both the primary and alternative buckets.
 
 ## Model-based Configuration
 
