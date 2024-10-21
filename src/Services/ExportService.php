@@ -301,10 +301,11 @@ class ExportService
         $nullableColumns = $this->getNullableColumns($tableName);
 
         // Map values, setting empty values to NULL if the column is nullable
-        $values = implode(", ", array_map(function($column, $value) use ($nullableColumns) {
+        $values = implode(", ", array_map(function ($column, $value) use ($nullableColumns) {
             if (is_null($value) || ($value === '' && in_array($column, $nullableColumns))) {
                 return 'NULL';
             }
+
             return "'" . addslashes($value) . "'";
         }, array_keys($row), array_values($row)));
 
@@ -319,7 +320,7 @@ class ExportService
      */
     protected function getNullableColumns($tableName)
     {
-        $columns = DB::select("SHOW COLUMNS FROM {$tableName}");
+        $columns         = DB::select("SHOW COLUMNS FROM {$tableName}");
         $nullableColumns = [];
 
         foreach ($columns as $column) {
