@@ -13,19 +13,20 @@ class ExportService
     /**
      * Export the database to a file, optionally uploading to S3.
      *
-     * @param string $filename The name of the file to export to.
      * @param bool $dropIfExists Whether to drop tables if they exist.
      * @param bool $noExpiration Whether the export link should have no expiration.
      * @return string The URL of the exported file.
      */
-    public function exportDatabase($filename, $dropIfExists, $noExpiration)
+    public function exportDatabase($dropIfExists, $noExpiration)
     {
-        $faker             = Faker::create();
-        $disk              = Storage::disk(config('filesystems.default'));
+        $faker        = Faker::create();
+        $disk         = Storage::disk(config('filesystems.default'));
+        // Generate a random filename
+        $filename     = 'export_' . Str::random(10) . '.sql';
         $encryptedFilename = Crypt::encryptString($filename);
-        $tables            = DB::select('SHOW TABLES');
-        $altS3Enabled      = config('export.aws_enabled', false);
-        $useMultipart      = config('export.use_multipart_upload', true);
+        $tables       = DB::select('SHOW TABLES');
+        $altS3Enabled = config('export.aws_enabled', false);
+        $useMultipart = config('export.use_multipart_upload', true);
 
         // Check if the storage is remote (S3) or alternative S3 is enabled
         if ($this->isRemoteDisk() || $altS3Enabled) {
@@ -73,11 +74,14 @@ class ExportService
                     $tableName  = array_values((array)$table)[0];
                     $modelClass = $this->getModelForTable($tableName);
 
+                    // Always write the table schema
+                    fwrite($tempStream, $this->exportTableSchema($tableName, $dropIfExists));
+
+                    // Only generate data if the model is not ignored
                     if ($modelClass && $this->shouldIgnoreModel($modelClass)) {
                         continue;
                     }
 
-                    fwrite($tempStream, $this->exportTableSchema($tableName, $dropIfExists));
                     $dataGenerator = $this->getTableDataGenerator($tableName, $modelClass);
 
                     foreach ($dataGenerator as $row) {
@@ -119,11 +123,14 @@ class ExportService
                     $tableName  = array_values((array)$table)[0];
                     $modelClass = $this->getModelForTable($tableName);
 
+                    // Always write the table schema
+                    fwrite($tempStream, $this->exportTableSchema($tableName, $dropIfExists));
+
+                    // Only generate data if the model is not ignored
                     if ($modelClass && $this->shouldIgnoreModel($modelClass)) {
                         continue;
                     }
 
-                    fwrite($tempStream, $this->exportTableSchema($tableName, $dropIfExists));
                     $dataGenerator = $this->getTableDataGenerator($tableName, $modelClass);
 
                     foreach ($dataGenerator as $row) {
@@ -169,11 +176,14 @@ class ExportService
                 $tableName  = array_values((array)$table)[0];
                 $modelClass = $this->getModelForTable($tableName);
 
+                // Always write the table schema
+                fwrite($localStream, $this->exportTableSchema($tableName, $dropIfExists));
+
+                // Only generate data if the model is not ignored
                 if ($modelClass && $this->shouldIgnoreModel($modelClass)) {
                     continue;
                 }
 
-                fwrite($localStream, $this->exportTableSchema($tableName, $dropIfExists));
                 $dataGenerator = $this->getTableDataGenerator($tableName, $modelClass);
 
                 foreach ($dataGenerator as $row) {
@@ -272,8 +282,8 @@ class ExportService
                 }
 
                 if (method_exists($modelInstance, 'porterShouldKeepRow') && $modelInstance->porterShouldKeepRow((array) $row)) {
+                    // Yield the row without randomization
                     yield $this->generateInsertStatement($tableName, (array) $row);
-
                     continue;
                 }
 

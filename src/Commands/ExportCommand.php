@@ -19,7 +19,6 @@ class ExportCommand extends Command
     public function handle()
     {
         // Retrieve arguments and options passed by the user.
-        $filename     = $this->argument('filename');
         $dropIfExists = $this->option('drop-if-exists');
         $noExpiration = $this->option('no-expiration');
 
@@ -27,7 +26,7 @@ class ExportCommand extends Command
         $exportService = new ExportService();
 
         // Call the service to handle the database export and get the download link.
-        $downloadLink = $exportService->exportDatabase($filename, $dropIfExists, $noExpiration);
+        $downloadLink = $exportService->exportDatabase($dropIfExists, $noExpiration);
 
         // Output the download link to the console.
         if ($downloadLink) {
