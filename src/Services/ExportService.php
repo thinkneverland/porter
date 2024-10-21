@@ -14,9 +14,9 @@ class ExportService
      * Export the database to a file, optionally uploading to S3.
      *
      * @param string $filename The name of the file to export to.
-     * @param bool $dropIfExists Whether to include DROP TABLE statements.
+     * @param bool $dropIfExists Whether to drop tables if they exist.
      * @param bool $noExpiration Whether the export link should have no expiration.
-     * @return string The URL or path to the exported file.
+     * @return string The URL of the exported file.
      */
     public function exportDatabase($filename, $dropIfExists, $noExpiration)
     {
@@ -27,7 +27,7 @@ class ExportService
         $altS3Enabled      = config('export.aws_enabled', false);
         $useMultipart      = config('export.use_multipart_upload', true);
 
-        // Determine if the export should be uploaded to S3
+        // Check if the storage is remote (S3) or alternative S3 is enabled
         if ($this->isRemoteDisk() || $altS3Enabled) {
             $clientConfig = [
                 'version'     => 'latest',
@@ -39,7 +39,6 @@ class ExportService
                 'use_path_style_endpoint' => config('filesystems.disks.s3.use_path_style_endpoint', false),
             ];
 
-            // Set the endpoint if specified
             $endpoint = $altS3Enabled ? config('export.aws_endpoint') : config('filesystems.disks.s3.endpoint', null);
             if ($endpoint) {
                 $clientConfig['endpoint'] = $endpoint;
@@ -62,25 +61,21 @@ class ExportService
                 $bufferSize = 5 * 1024 * 1024; // 5 MB buffer size
                 $tempStream = fopen('php://temp', 'r+');
 
-                // Disable foreign key checks
                 fwrite($tempStream, "SET FOREIGN_KEY_CHECKS=0;\n");
 
-                // Optionally add DROP TABLE statements
                 if ($dropIfExists) {
                     fwrite($tempStream, "-- Add DROP IF EXISTS for each table.\n");
                 }
 
-                // Iterate over each table and export its data
+                // Iterate over each table and export schema and data
                 foreach ($tables as $table) {
                     $tableName  = array_values((array)$table)[0];
                     $modelClass = $this->getModelForTable($tableName);
 
-                    // Skip tables that should be ignored
                     if ($modelClass && $this->shouldIgnoreModel($modelClass)) {
                         continue;
                     }
 
-                    // Write the table schema and data to the stream
                     fwrite($tempStream, $this->exportTableSchema($tableName, $dropIfExists));
                     $dataGenerator = $this->getTableDataGenerator($tableName, $modelClass);
 
@@ -94,15 +89,13 @@ class ExportService
                     }
                 }
 
-                // Final flush to S3 if there's remaining data
+                // Final flush to S3
                 if (ftell($tempStream) > 0) {
                     $this->flushToS3($client, $bucket, $key, $tempStream, $uploadId, $partNumber++, $parts);
                 }
 
-                // Re-enable foreign key checks
                 fwrite($tempStream, "SET FOREIGN_KEY_CHECKS=1;\n");
 
-                // Complete the multipart upload
                 $client->completeMultipartUpload([
                     'Bucket'          => $bucket,
                     'Key'             => $key,
@@ -112,10 +105,9 @@ class ExportService
 
                 fclose($tempStream);
             } else {
-                // Single-part upload
+                // Single part upload
                 $tempStream = fopen('php://temp', 'r+');
 
-                // Disable foreign key checks
                 fwrite($tempStream, "SET FOREIGN_KEY_CHECKS=0;\n");
 
                 if ($dropIfExists) {
@@ -138,7 +130,6 @@ class ExportService
                     }
                 }
 
-                // Re-enable foreign key checks
                 fwrite($tempStream, "SET FOREIGN_KEY_CHECKS=1;\n");
 
                 rewind($tempStream);
@@ -163,11 +154,10 @@ class ExportService
 
             return $url;
         } else {
-            // Local file storage
+            // Local storage
             $filePath    = storage_path("app/public/{$encryptedFilename}");
             $localStream = fopen($filePath, 'w+');
 
-            // Disable foreign key checks
             fwrite($localStream, "SET FOREIGN_KEY_CHECKS=0;\n");
 
             if ($dropIfExists) {
@@ -190,7 +180,6 @@ class ExportService
                 }
             }
 
-            // Re-enable foreign key checks
             fwrite($localStream, "SET FOREIGN_KEY_CHECKS=1;\n");
 
             fclose($localStream);
@@ -200,12 +189,12 @@ class ExportService
     }
 
     /**
-     * Flush the current buffer to S3 as a part of a multipart upload.
+     * Flush the contents of the temporary stream to S3.
      *
      * @param S3Client $client The S3 client.
      * @param string $bucket The S3 bucket name.
      * @param string $key The S3 object key.
-     * @param resource $tempStream The temporary stream resource.
+     * @param resource $tempStream The temporary stream.
      * @param string $uploadId The multipart upload ID.
      * @param int $partNumber The part number.
      * @param array &$parts The array of uploaded parts.
@@ -214,7 +203,6 @@ class ExportService
     {
         rewind($tempStream);
 
-        // Upload the current part to S3
         $result = $client->uploadPart([
             'Bucket'     => $bucket,
             'Key'        => $key,
@@ -223,19 +211,17 @@ class ExportService
             'Body'       => stream_get_contents($tempStream),
         ]);
 
-        // Store the part information for completing the upload
         $parts[] = [
             'PartNumber' => $partNumber,
             'ETag'       => $result['ETag'],
         ];
 
-        // Clear the temporary stream for the next part
         ftruncate($tempStream, 0);
         rewind($tempStream);
     }
 
     /**
-     * Determine if the current storage disk is remote (S3).
+     * Check if the current storage disk is remote (S3).
      *
      * @return bool True if the disk is remote, false otherwise.
      */
@@ -245,10 +231,10 @@ class ExportService
     }
 
     /**
-     * Export the schema of a given table.
+     * Export the schema for a given table.
      *
      * @param string $tableName The name of the table.
-     * @param bool $dropIfExists Whether to include a DROP TABLE statement.
+     * @param bool $dropIfExists Whether to include DROP TABLE IF EXISTS.
      * @return string The SQL schema for the table.
      */
     protected function exportTableSchema($tableName, $dropIfExists)
@@ -259,7 +245,6 @@ class ExportService
             $schema .= "DROP TABLE IF EXISTS `{$tableName}`;\n";
         }
 
-        // Get the CREATE TABLE statement for the table
         $createTableQuery = DB::select("SHOW CREATE TABLE {$tableName}")[0]->{'Create Table'};
         $schema .= "{$createTableQuery};\n\n";
 
@@ -267,7 +252,7 @@ class ExportService
     }
 
     /**
-     * Generate data for a table, potentially randomizing it.
+     * Get a generator for the data of a given table.
      *
      * @param string $tableName The name of the table.
      * @param string|null $modelClass The model class associated with the table.
@@ -281,18 +266,15 @@ class ExportService
             if ($modelClass) {
                 $modelInstance = new $modelClass();
 
-                // Check if the model should be ignored
                 if (method_exists($modelInstance, 'porterShouldIgnoreModel') && $modelInstance->porterShouldIgnoreModel()) {
                     continue;
                 }
 
-                // Check if the row should be kept as is
                 if (method_exists($modelInstance, 'porterShouldKeepRow') && $modelInstance->porterShouldKeepRow((array) $row)) {
                     yield $this->generateInsertStatement($tableName, (array) $row);
                     continue;
                 }
 
-                // Randomize the row using the trait method
                 if (method_exists($modelInstance, 'porterRandomizeRow')) {
                     $row = $modelInstance->porterRandomizeRow((array) $row);
                 }
@@ -312,9 +294,16 @@ class ExportService
     protected function generateInsertStatement($tableName, array $row)
     {
         $columns = implode('`, `', array_keys($row));
-        $values  = implode("', '", array_map('addslashes', array_values($row)));
 
-        return "INSERT INTO `{$tableName}` (`{$columns}`) VALUES ('{$values}');\n";
+        // Map values, setting empty values to NULL
+        $values = implode(", ", array_map(function($value) {
+            if (is_null($value) || $value === '') {
+                return 'NULL';
+            }
+            return "'" . addslashes($value) . "'";
+        }, array_values($row)));
+
+        return "INSERT INTO `{$tableName}` (`{$columns}`) VALUES ({$values});\n";
     }
 
     /**
@@ -339,7 +328,7 @@ class ExportService
     }
 
     /**
-     * Retrieve all model classes in the application.
+     * Get all model classes in the application.
      *
      * @return array An array of model class names.
      */
@@ -351,7 +340,6 @@ class ExportService
 
         $finder = new Finder();
 
-        // Find all PHP files in the Models directory
         foreach ($finder->files()->in($modelPath)->name('*.php') as $file) {
             $relativePath = str_replace('/', '\\', $file->getRelativePathname());
             $class        = $namespace . 'Models\\' . Str::replaceLast('.php', '', $relativePath);
