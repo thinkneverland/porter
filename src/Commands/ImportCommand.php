@@ -3,6 +3,7 @@
 namespace ThinkNeverland\Porter\Commands;
 
 use Illuminate\Console\Command;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 
 class ImportCommand extends Command
@@ -30,9 +31,12 @@ class ImportCommand extends Command
 
         // Load and import SQL file contents into the database
         $sql = file_get_contents($filePath);
-        DB::unprepared($sql);
-
-        $this->info('Database imported successfully!');
+        try {
+            DB::unprepared($sql);
+            $this->info('Database imported successfully!');
+        } catch (QueryException $e) {
+            $this->error('Failed to import database: ' . $e->getMessage());
+        }
     }
 
     /**
