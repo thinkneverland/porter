@@ -7,6 +7,7 @@ use Faker\Factory as Faker;
 use Illuminate\Support\Facades\{Crypt, DB, Storage};
 use Illuminate\Support\Str;
 use Symfony\Component\Finder\Finder;
+use ThinkNeverland\Porter\PorterConfigurable; // Import PorterConfigurable
 
 class ExportService
 {
@@ -65,7 +66,7 @@ class ExportService
                     }
 
                     fwrite($tempStream, $this->exportTableSchema($tableName, $dropIfExists));
-                    $dataGenerator = $this->getTableDataGenerator($tableName, $modelClass, $faker);
+                    $dataGenerator = $this->getTableDataGenerator($tableName, $modelClass);
 
                     foreach ($dataGenerator as $row) {
                         fwrite($tempStream, $row);
@@ -104,7 +105,7 @@ class ExportService
                     }
 
                     fwrite($tempStream, $this->exportTableSchema($tableName, $dropIfExists));
-                    $dataGenerator = $this->getTableDataGenerator($tableName, $modelClass, $faker);
+                    $dataGenerator = $this->getTableDataGenerator($tableName, $modelClass);
 
                     foreach ($dataGenerator as $row) {
                         fwrite($tempStream, $row);
@@ -149,7 +150,7 @@ class ExportService
                 }
 
                 fwrite($localStream, $this->exportTableSchema($tableName, $dropIfExists));
-                $dataGenerator = $this->getTableDataGenerator($tableName, $modelClass, $faker);
+                $dataGenerator = $this->getTableDataGenerator($tableName, $modelClass);
 
                 foreach ($dataGenerator as $row) {
                     fwrite($localStream, $row);
@@ -202,9 +203,10 @@ class ExportService
         return $schema;
     }
 
-    protected function getTableDataGenerator($tableName, $modelClass, $faker)
+    protected function getTableDataGenerator($tableName, $modelClass)
     {
         $data = DB::table($tableName)->cursor();
+        $porterConfigurable = new PorterConfigurable($modelClass); // Initialize PorterConfigurable
 
         foreach ($data as $row) {
             if ($modelClass) {
@@ -214,11 +216,7 @@ class ExportService
                     continue;
                 }
 
-                foreach ($row as $key => $value) {
-                    if (in_array($key, $modelClass::$omittedFromPorter ?? [])) {
-                        $row->{$key} = $faker->word;
-                    }
-                }
+                $row = $porterConfigurable->randomizeData((array) $row); // Use PorterConfigurable to randomize data
             }
 
             yield $this->generateInsertStatement($tableName, (array) $row);
