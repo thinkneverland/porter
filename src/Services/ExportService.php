@@ -40,6 +40,7 @@ class ExportService
             ];
 
             $endpoint = $altS3Enabled ? config('export.aws_endpoint') : config('filesystems.disks.s3.endpoint', null);
+
             if ($endpoint) {
                 $clientConfig['endpoint'] = $endpoint;
             }
@@ -144,7 +145,7 @@ class ExportService
 
             // Generate a presigned URL for the uploaded file
             $expiration = $altS3Enabled ? config('export.aws_expiration', 3600) : config('filesystems.disks.s3.expiration', 3600);
-            $cmd = $client->getCommand('GetObject', [
+            $cmd        = $client->getCommand('GetObject', [
                 'Bucket' => $bucket,
                 'Key'    => $key,
             ]);
@@ -272,6 +273,7 @@ class ExportService
 
                 if (method_exists($modelInstance, 'porterShouldKeepRow') && $modelInstance->porterShouldKeepRow((array) $row)) {
                     yield $this->generateInsertStatement($tableName, (array) $row);
+
                     continue;
                 }
 
@@ -295,15 +297,38 @@ class ExportService
     {
         $columns = implode('`, `', array_keys($row));
 
-        // Map values, setting empty values to NULL
-        $values = implode(", ", array_map(function($value) {
-            if (is_null($value) || $value === '') {
+        // Get nullable columns for the table
+        $nullableColumns = $this->getNullableColumns($tableName);
+
+        // Map values, setting empty values to NULL if the column is nullable
+        $values = implode(", ", array_map(function($column, $value) use ($nullableColumns) {
+            if (is_null($value) || ($value === '' && in_array($column, $nullableColumns))) {
                 return 'NULL';
             }
             return "'" . addslashes($value) . "'";
-        }, array_values($row)));
+        }, array_keys($row), array_values($row)));
 
         return "INSERT INTO `{$tableName}` (`{$columns}`) VALUES ({$values});\n";
+    }
+
+    /**
+     * Get nullable columns for a given table.
+     *
+     * @param string $tableName The name of the table.
+     * @return array An array of nullable column names.
+     */
+    protected function getNullableColumns($tableName)
+    {
+        $columns = DB::select("SHOW COLUMNS FROM {$tableName}");
+        $nullableColumns = [];
+
+        foreach ($columns as $column) {
+            if ($column->Null === 'YES') {
+                $nullableColumns[] = $column->Field;
+            }
+        }
+
+        return $nullableColumns;
     }
 
     /**
@@ -361,6 +386,7 @@ class ExportService
     protected function shouldIgnoreModel($modelClass)
     {
         $modelInstance = new $modelClass();
+
         return method_exists($modelInstance, 'porterShouldIgnoreModel') && $modelInstance->porterShouldIgnoreModel();
     }
 }

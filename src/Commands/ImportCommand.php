@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\DB;
 class ImportCommand extends Command
 {
     protected $signature = 'porter:import {file}';
+
     protected $description = 'Import a SQL file into the database';
 
     public function handle()
@@ -26,11 +27,13 @@ class ImportCommand extends Command
         // Check if the file exists
         if (!file_exists($filePath)) {
             $this->error("File not found at {$filePath}");
+
             return;
         }
 
         // Load and import SQL file contents into the database
         $sql = file_get_contents($filePath);
+
         try {
             DB::unprepared($sql);
             $this->info('Database imported successfully!');
