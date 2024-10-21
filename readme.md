@@ -160,12 +160,14 @@ Instead of using the config file, randomization and keeping specific rows for ta
 
 ```php
 // Inside the User model:
+use PorterConfigurable;
+
 // These will be randomized during Porter export/import operations.
-protected static $omittedFromPorter = ['email', 'name'];
+protected $omittedFromPorter = ['email', 'name'];
 // This will keep specific rows during Porter export/import operations.
-protected static $keepForPorter = [1, 2, 3];
+protected $keepForPorter = [1, 2, 3];
 // This will ensure the model is ignored during Porter export/import operations.
-public static $ignoreFromPorter = true;
+public $ignoreFromPorter = true;
 ```
 
 You can also ignore specific tables directly in the model to prevent them from being exported.
