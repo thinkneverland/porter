@@ -62,6 +62,9 @@ class ExportService
                 $bufferSize = 5 * 1024 * 1024; // 5 MB buffer size
                 $tempStream = fopen('php://temp', 'r+');
 
+                // Disable foreign key checks
+                fwrite($tempStream, "SET FOREIGN_KEY_CHECKS=0;\n");
+
                 // Optionally add DROP TABLE statements
                 if ($dropIfExists) {
                     fwrite($tempStream, "-- Add DROP IF EXISTS for each table.\n");
@@ -96,6 +99,9 @@ class ExportService
                     $this->flushToS3($client, $bucket, $key, $tempStream, $uploadId, $partNumber++, $parts);
                 }
 
+                // Re-enable foreign key checks
+                fwrite($tempStream, "SET FOREIGN_KEY_CHECKS=1;\n");
+
                 // Complete the multipart upload
                 $client->completeMultipartUpload([
                     'Bucket'          => $bucket,
@@ -108,6 +114,9 @@ class ExportService
             } else {
                 // Single-part upload
                 $tempStream = fopen('php://temp', 'r+');
+
+                // Disable foreign key checks
+                fwrite($tempStream, "SET FOREIGN_KEY_CHECKS=0;\n");
 
                 if ($dropIfExists) {
                     fwrite($tempStream, "-- Add DROP IF EXISTS for each table.\n");
@@ -128,6 +137,9 @@ class ExportService
                         fwrite($tempStream, $row);
                     }
                 }
+
+                // Re-enable foreign key checks
+                fwrite($tempStream, "SET FOREIGN_KEY_CHECKS=1;\n");
 
                 rewind($tempStream);
                 $client->putObject([
@@ -155,6 +167,9 @@ class ExportService
             $filePath    = storage_path("app/public/{$encryptedFilename}");
             $localStream = fopen($filePath, 'w+');
 
+            // Disable foreign key checks
+            fwrite($localStream, "SET FOREIGN_KEY_CHECKS=0;\n");
+
             if ($dropIfExists) {
                 fwrite($localStream, "-- Add DROP IF EXISTS for each table.\n");
             }
@@ -174,6 +189,9 @@ class ExportService
                     fwrite($localStream, $row);
                 }
             }
+
+            // Re-enable foreign key checks
+            fwrite($localStream, "SET FOREIGN_KEY_CHECKS=1;\n");
 
             fclose($localStream);
 
