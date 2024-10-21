@@ -3,31 +3,46 @@
 namespace ThinkNeverland\Porter\Commands;
 
 use Illuminate\Console\Command;
-use ThinkNeverland\Porter\Services\ImportService;
+use Illuminate\Support\Facades\DB;
 
 class ImportCommand extends Command
 {
-    // Command signature with the path argument for importing SQL files.
-    protected $signature = 'porter:import {path}';
-
-    // Command description for Artisan.
+    protected $signature = 'porter:import {file}';
     protected $description = 'Import a SQL file into the database';
 
-    /**
-     * Handle the command execution.
-     */
     public function handle()
     {
-        // Retrieve the file path argument passed by the user.
-        $path = $this->argument('path');
+        $file = $this->argument('file');
 
-        // Create an instance of the ImportService.
-        $importService = new ImportService();
+        // Determine if the path is absolute
+        if ($this->isAbsolutePath($file)) {
+            $filePath = $file;
+        } else {
+            // Treat it as a relative path from the project root
+            $filePath = base_path($file);
+        }
 
-        // Call the service to handle the database import.
-        $importService->importDatabase($path);
+        // Check if the file exists
+        if (!file_exists($filePath)) {
+            $this->error("File not found at {$filePath}");
+            return;
+        }
 
-        // Output a success message to the console.
-        $this->info("Database import completed from: $path");
+        // Load and import SQL file contents into the database
+        $sql = file_get_contents($filePath);
+        DB::unprepared($sql);
+
+        $this->info('Database imported successfully!');
+    }
+
+    /**
+     * Check if a given path is an absolute path.
+     *
+     * @param string $path
+     * @return bool
+     */
+    protected function isAbsolutePath($path)
+    {
+        return $path[0] === DIRECTORY_SEPARATOR || preg_match('/^[a-zA-Z]:[\/\\\\]/', $path);
     }
 }
