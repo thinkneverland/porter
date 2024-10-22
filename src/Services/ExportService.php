@@ -19,35 +19,36 @@ class ExportService
      */
     public function exportDatabase($dropIfExists, $noExpiration)
     {
-        $faker        = Faker::create();
-        $disk         = Storage::disk(config('filesystems.default'));
+        $faker = Faker::create();
+        $disk  = Storage::disk(config('filesystems.default'));
         // Generate a random filename
-        $filename     = 'export_' . Str::random(10) . '.sql';
+        $filename          = 'export_' . Str::random(10) . '.sql';
         $encryptedFilename = Crypt::encryptString($filename);
-        $tables       = DB::select('SHOW TABLES');
-        $altS3Enabled = config('export.aws_enabled', false);
-        $useMultipart = config('export.use_multipart_upload', true);
+        $tables            = DB::select('SHOW TABLES');
+
+        $altS3Enabled = config('porter.export_alt.enabled', false);
+        $useMultipart = config('porter.export.multipart', true);
 
         // Check if the storage is remote (S3) or alternative S3 is enabled
         if ($this->isRemoteDisk() || $altS3Enabled) {
             $clientConfig = [
                 'version'     => 'latest',
-                'region'      => $altS3Enabled ? config('export.aws_region') : config('filesystems.disks.s3.region'),
+                'region'      => $altS3Enabled ? config('porter.export_alt.region') : config('filesystems.disks.s3.region'),
                 'credentials' => [
-                    'key'    => $altS3Enabled ? config('export.aws_access_key_id') : config('filesystems.disks.s3.key'),
-                    'secret' => $altS3Enabled ? config('export.aws_secret_access_key') : config('filesystems.disks.s3.secret'),
+                    'key'    => $altS3Enabled ? config('porter.export_alt.access_key') : config('filesystems.disks.s3.key'),
+                    'secret' => $altS3Enabled ? config('porter.export_alt.secret_key') : config('filesystems.disks.s3.secret'),
                 ],
-                'use_path_style_endpoint' => config('filesystems.disks.s3.use_path_style_endpoint', false),
+                'use_path_style_endpoint' => $altS3Enabled ? config('porter.export_alt.use_path_style_endpoint') : config('filesystems.disks.s3.use_path_style_endpoint', false),
             ];
 
-            $endpoint = $altS3Enabled ? config('export.aws_endpoint') : config('filesystems.disks.s3.endpoint', null);
+            $endpoint = $altS3Enabled ? config('porter.export_alt.endpoint') : config('filesystems.disks.s3.endpoint', null);
 
             if ($endpoint) {
                 $clientConfig['endpoint'] = $endpoint;
             }
 
             $client = new S3Client($clientConfig);
-            $bucket = $altS3Enabled ? config('export.aws_bucket') : config('filesystems.disks.s3.bucket');
+            $bucket = $altS3Enabled ? config('porter.export_alt.bucket') : config('filesystems.disks.s3.bucket');
             $key    = $encryptedFilename;
 
             // Use multipart upload if enabled
@@ -284,6 +285,7 @@ class ExportService
                 if (method_exists($modelInstance, 'porterShouldKeepRow') && $modelInstance->porterShouldKeepRow((array) $row)) {
                     // Yield the row without randomization
                     yield $this->generateInsertStatement($tableName, (array) $row);
+
                     continue;
                 }
 

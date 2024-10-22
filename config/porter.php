@@ -20,15 +20,19 @@ return [
     ],
 
     // Alternate S3 Export Configuration
-    'alt_s3' => [
-        'enabled'    => env('EXPORT_AWS_ENABLED', false),
-        'bucket'     => env('EXPORT_AWS_BUCKET', null),
-        'region'     => env('EXPORT_AWS_REGION', null),
-        'access_key' => env('EXPORT_AWS_ACCESS_KEY_ID', null),
-        'secret_key' => env('EXPORT_AWS_SECRET_ACCESS_KEY', null),
-        'url'        => env('EXPORT_AWS_URL', null),
-        'endpoint'   => env('EXPORT_AWS_ENDPOINT', null), // Optional for custom S3 services like MinIO
+    'export_alt' => [
+        'enabled'                 => env('EXPORT_ALT_AWS_ENABLED', false),
+        'bucket'                  => env('EXPORT_ALT_AWS_BUCKET', null),
+        'region'                  => env('EXPORT_ALT_AWS_REGION', null),
+        'access_key'              => env('EXPORT_ALT_AWS_ACCESS_KEY_ID', null),
+        'secret_key'              => env('EXPORT_ALT_AWS_SECRET_ACCESS_KEY', null),
+        'url'                     => env('EXPORT_ALT_AWS_URL', null),
+        'endpoint'                => env('EXPORT_ALT_AWS_ENDPOINT', null), // Optional for custom S3 services like MinIO
+        'use_path_style_endpoint' => env('EXPORT_ALT_AWS_USE_PATH_STYLE_ENDPOINT', false),
     ],
 
-    'expiration' => env('EXPORT_AWS_EXPIRATION', 3600),  // Expiration time in seconds
+    'export' => [
+        'multipart'  => env('EXPORT_MULTIPART', false),
+        'expiration' => env('EXPORT_AWS_EXPIRATION', 3600),  // Expiration time in seconds
+    ],
 ];
