@@ -21,16 +21,20 @@ class ExportService
     {
         $faker = Faker::create();
         $disk  = Storage::disk(config('filesystems.default'));
-        // Generate a random filename
+
+        // Generate a random filename for the export
         $filename          = 'export_' . Str::random(10) . '.sql';
         $encryptedFilename = Crypt::encryptString($filename);
-        $tables            = DB::select('SHOW TABLES');
 
+        // Retrieve all tables in the database
+        $tables = DB::select('SHOW TABLES');
+
+        // Configuration for alternative S3
         $altS3Enabled = config('porter.export_alt.enabled', false);
-        $useMultipart = config('porter.export.multipart', true);
 
         // Check if the storage is remote (S3) or alternative S3 is enabled
         if ($this->isRemoteDisk() || $altS3Enabled) {
+            // Configure S3 client
             $clientConfig = [
                 'version'     => 'latest',
                 'region'      => $altS3Enabled ? config('porter.export_alt.region') : config('filesystems.disks.s3.region'),
@@ -41,115 +45,78 @@ class ExportService
                 'use_path_style_endpoint' => $altS3Enabled ? config('porter.export_alt.use_path_style_endpoint') : config('filesystems.disks.s3.use_path_style_endpoint', false),
             ];
 
+            // Set endpoint if specified
             $endpoint = $altS3Enabled ? config('porter.export_alt.endpoint') : config('filesystems.disks.s3.endpoint', null);
-
             if ($endpoint) {
                 $clientConfig['endpoint'] = $endpoint;
             }
 
+            // Initialize S3 client
             $client = new S3Client($clientConfig);
             $bucket = $altS3Enabled ? config('porter.export_alt.bucket') : config('filesystems.disks.s3.bucket');
             $key    = $encryptedFilename;
 
-            // Use multipart upload if enabled
-            if ($useMultipart) {
-                $multipart = $client->createMultipartUpload([
-                    'Bucket' => $bucket,
-                    'Key'    => $key,
-                ]);
+            // Use multipart upload for S3
+            $multipart = $client->createMultipartUpload([
+                'Bucket' => $bucket,
+                'Key'    => $key,
+            ]);
 
-                $uploadId   = $multipart['UploadId'];
-                $partNumber = 1;
-                $parts      = [];
-                $bufferSize = 5 * 1024 * 1024; // 5 MB buffer size
-                $tempStream = fopen('php://temp', 'r+');
+            $uploadId   = $multipart['UploadId'];
+            $partNumber = 1;
+            $parts      = [];
+            $bufferSize = 5 * 1024 * 1024; // 5 MB buffer size
+            $tempStream = fopen('php://temp', 'r+');
 
-                fwrite($tempStream, "SET FOREIGN_KEY_CHECKS=0;\n");
+            // Disable foreign key checks for export
+            fwrite($tempStream, "SET FOREIGN_KEY_CHECKS=0;\n");
 
-                if ($dropIfExists) {
-                    fwrite($tempStream, "-- Add DROP IF EXISTS for each table.\n");
-                }
-
-                // Iterate over each table and export schema and data
-                foreach ($tables as $table) {
-                    $tableName  = array_values((array)$table)[0];
-                    $modelClass = $this->getModelForTable($tableName);
-
-                    // Always write the table schema
-                    fwrite($tempStream, $this->exportTableSchema($tableName, $dropIfExists));
-
-                    // Only generate data if the model is not ignored
-                    if ($modelClass && $this->shouldIgnoreModel($modelClass)) {
-                        continue;
-                    }
-
-                    $dataGenerator = $this->getTableDataGenerator($tableName, $modelClass);
-
-                    foreach ($dataGenerator as $row) {
-                        fwrite($tempStream, $row);
-
-                        // Flush to S3 if buffer size is exceeded
-                        if (ftell($tempStream) >= $bufferSize) {
-                            $this->flushToS3($client, $bucket, $key, $tempStream, $uploadId, $partNumber++, $parts);
-                        }
-                    }
-                }
-
-                // Final flush to S3
-                if (ftell($tempStream) > 0) {
-                    $this->flushToS3($client, $bucket, $key, $tempStream, $uploadId, $partNumber++, $parts);
-                }
-
-                fwrite($tempStream, "SET FOREIGN_KEY_CHECKS=1;\n");
-
-                $client->completeMultipartUpload([
-                    'Bucket'          => $bucket,
-                    'Key'             => $key,
-                    'UploadId'        => $uploadId,
-                    'MultipartUpload' => ['Parts' => $parts],
-                ]);
-
-                fclose($tempStream);
-            } else {
-                // Single part upload
-                $tempStream = fopen('php://temp', 'r+');
-
-                fwrite($tempStream, "SET FOREIGN_KEY_CHECKS=0;\n");
-
-                if ($dropIfExists) {
-                    fwrite($tempStream, "-- Add DROP IF EXISTS for each table.\n");
-                }
-
-                foreach ($tables as $table) {
-                    $tableName  = array_values((array)$table)[0];
-                    $modelClass = $this->getModelForTable($tableName);
-
-                    // Always write the table schema
-                    fwrite($tempStream, $this->exportTableSchema($tableName, $dropIfExists));
-
-                    // Only generate data if the model is not ignored
-                    if ($modelClass && $this->shouldIgnoreModel($modelClass)) {
-                        continue;
-                    }
-
-                    $dataGenerator = $this->getTableDataGenerator($tableName, $modelClass);
-
-                    foreach ($dataGenerator as $row) {
-                        fwrite($tempStream, $row);
-                    }
-                }
-
-                fwrite($tempStream, "SET FOREIGN_KEY_CHECKS=1;\n");
-
-                rewind($tempStream);
-                $client->putObject([
-                    'Bucket' => $bucket,
-                    'Key'    => $key,
-                    'Body'   => stream_get_contents($tempStream),
-                ]);
-
-                fclose($tempStream);
+            if ($dropIfExists) {
+                fwrite($tempStream, "-- Add DROP IF EXISTS for each table.\n");
             }
+
+            // Iterate over each table and export schema and data
+            foreach ($tables as $table) {
+                $tableName  = array_values((array)$table)[0];
+                $modelClass = $this->getModelForTable($tableName);
+
+                // Write the table schema
+                fwrite($tempStream, $this->exportTableSchema($tableName, $dropIfExists));
+
+                // Skip data generation if the model should be ignored
+                if ($modelClass && $this->shouldIgnoreModel($modelClass)) {
+                    continue;
+                }
+
+                // Generate and write data for the table
+                $dataGenerator = $this->getTableDataGenerator($tableName, $modelClass);
+                foreach ($dataGenerator as $row) {
+                    fwrite($tempStream, $row);
+
+                    // Flush to S3 if buffer size is exceeded
+                    if (ftell($tempStream) >= $bufferSize) {
+                        $this->flushToS3($client, $bucket, $key, $tempStream, $uploadId, $partNumber++, $parts);
+                    }
+                }
+            }
+
+            // Final flush to S3 for any remaining data
+            if (ftell($tempStream) > 0) {
+                $this->flushToS3($client, $bucket, $key, $tempStream, $uploadId, $partNumber++, $parts);
+            }
+
+            // Re-enable foreign key checks
+            fwrite($tempStream, "SET FOREIGN_KEY_CHECKS=1;\n");
+
+            // Complete the multipart upload
+            $client->completeMultipartUpload([
+                'Bucket'          => $bucket,
+                'Key'             => $key,
+                'UploadId'        => $uploadId,
+                'MultipartUpload' => ['Parts' => $parts],
+            ]);
+
+            fclose($tempStream);
 
             // Generate a presigned URL for the uploaded file
             $expiration = $altS3Enabled ? config('export.aws_expiration', 3600) : config('filesystems.disks.s3.expiration', 3600);
@@ -177,16 +144,16 @@ class ExportService
                 $tableName  = array_values((array)$table)[0];
                 $modelClass = $this->getModelForTable($tableName);
 
-                // Always write the table schema
+                // Write the table schema
                 fwrite($localStream, $this->exportTableSchema($tableName, $dropIfExists));
 
-                // Only generate data if the model is not ignored
+                // Skip data generation if the model should be ignored
                 if ($modelClass && $this->shouldIgnoreModel($modelClass)) {
                     continue;
                 }
 
+                // Generate and write data for the table
                 $dataGenerator = $this->getTableDataGenerator($tableName, $modelClass);
-
                 foreach ($dataGenerator as $row) {
                     fwrite($localStream, $row);
                 }
@@ -215,6 +182,7 @@ class ExportService
     {
         rewind($tempStream);
 
+        // Upload the current part to S3
         $result = $client->uploadPart([
             'Bucket'     => $bucket,
             'Key'        => $key,
@@ -223,11 +191,13 @@ class ExportService
             'Body'       => stream_get_contents($tempStream),
         ]);
 
+        // Store the part information for completing the upload
         $parts[] = [
             'PartNumber' => $partNumber,
             'ETag'       => $result['ETag'],
         ];
 
+        // Clear the temporary stream for the next part
         ftruncate($tempStream, 0);
         rewind($tempStream);
     }
@@ -257,6 +227,7 @@ class ExportService
             $schema .= "DROP TABLE IF EXISTS `{$tableName}`;\n";
         }
 
+        // Retrieve the CREATE TABLE statement for the table
         $createTableQuery = DB::select("SHOW CREATE TABLE {$tableName}")[0]->{'Create Table'};
         $schema .= "{$createTableQuery};\n\n";
 
@@ -272,28 +243,31 @@ class ExportService
      */
     protected function getTableDataGenerator($tableName, $modelClass)
     {
+        // Use a cursor to iterate over the table data
         $data = DB::table($tableName)->cursor();
 
         foreach ($data as $row) {
             if ($modelClass) {
                 $modelInstance = new $modelClass();
 
+                // Check if the model should ignore this row
                 if (method_exists($modelInstance, 'porterShouldIgnoreModel') && $modelInstance->porterShouldIgnoreModel()) {
                     continue;
                 }
 
+                // Check if the row should be kept as is
                 if (method_exists($modelInstance, 'porterShouldKeepRow') && $modelInstance->porterShouldKeepRow((array) $row)) {
-                    // Yield the row without randomization
                     yield $this->generateInsertStatement($tableName, (array) $row);
-
                     continue;
                 }
 
+                // Randomize the row if applicable
                 if (method_exists($modelInstance, 'porterRandomizeRow')) {
                     $row = $modelInstance->porterRandomizeRow((array) $row);
                 }
             }
 
+            // Generate and yield the SQL insert statement for the row
             yield $this->generateInsertStatement($tableName, (array) $row);
         }
     }

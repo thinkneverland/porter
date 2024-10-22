@@ -32,7 +32,6 @@ return [
     ],
 
     'export' => [
-        'multipart'  => env('EXPORT_MULTIPART', false),
         'expiration' => env('EXPORT_AWS_EXPIRATION', 3600),  // Expiration time in seconds
     ],
 ];
