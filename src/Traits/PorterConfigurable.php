@@ -7,6 +7,7 @@ use Faker\Factory as Faker;
 trait PorterConfigurable
 {
     private static $fakerInstance = null;
+
     private $columnTypeCache = [];
 
     /**
@@ -17,6 +18,7 @@ trait PorterConfigurable
         if (self::$fakerInstance === null) {
             self::$fakerInstance = Faker::create();
         }
+
         return self::$fakerInstance;
     }
 
@@ -26,7 +28,7 @@ trait PorterConfigurable
     protected function getColumnType($columnName)
     {
         if (!isset($this->columnTypeCache[$columnName])) {
-            $type = $this->determineColumnType($columnName);
+            $type                               = $this->determineColumnType($columnName);
             $this->columnTypeCache[$columnName] = $type;
         }
 
@@ -39,17 +41,17 @@ trait PorterConfigurable
     protected function determineColumnType($columnName)
     {
         $types = [
-            'email' => 'email',
-            'name' => 'name',
-            'phone' => 'phone',
-            'address' => 'address',
-            'city' => 'city',
-            'country' => 'country',
-            'date' => 'date',
-            'url' => 'url',
-            'link' => 'url',
+            'email'    => 'email',
+            'name'     => 'name',
+            'phone'    => 'phone',
+            'address'  => 'address',
+            'city'     => 'city',
+            'country'  => 'country',
+            'date'     => 'date',
+            'url'      => 'url',
+            'link'     => 'url',
             'password' => 'password',
-            'token' => 'token'
+            'token'    => 'token',
         ];
 
         foreach ($types as $key => $type) {
@@ -66,7 +68,7 @@ trait PorterConfigurable
      */
     public function porterRandomizeRow(array $row)
     {
-        $faker = $this->getFaker();
+        $faker          = $this->getFaker();
         $omittedColumns = $this->getPorterConfig('omittedFromPorter', []);
 
         foreach ($row as $key => $value) {
@@ -74,7 +76,7 @@ trait PorterConfigurable
                 continue;
             }
 
-            $type = $this->getColumnType($key);
+            $type      = $this->getColumnType($key);
             $row[$key] = $this->generateFakeValue($type, $value, $faker);
         }
 

@@ -4,13 +4,14 @@ namespace ThinkNeverland\Porter\Services;
 
 use Aws\S3\S3Client;
 use Faker\Factory as Faker;
-use Illuminate\Support\Facades\{Crypt, DB, Schema, Storage};
+use Illuminate\Support\Facades\{Crypt, DB, Schema};
 use Illuminate\Support\Str;
 use Symfony\Component\Finder\Finder;
 
 class ExportService
 {
     private $modelCache = [];
+
     private static $fakerInstance = null;
 
     protected function getFaker()
@@ -21,12 +22,14 @@ class ExportService
     protected function getOptimalBufferSize()
     {
         $memoryLimit = ini_get('memory_limit');
-        $value = (int)$memoryLimit;
-        $unit = strtolower(substr($memoryLimit, -1));
+        $value       = (int)$memoryLimit;
+        $unit        = strtolower(substr($memoryLimit, -1));
 
         switch ($unit) {
             case 'g': $value *= 1024;
+                // no break
             case 'm': $value *= 1024;
+                // no break
             case 'k': $value *= 1024;
         }
 
@@ -35,10 +38,10 @@ class ExportService
 
     public function exportDatabase($dropIfExists)
     {
-        $filename = 'export_' . Str::random(10) . '.sql';
+        $filename          = 'export_' . Str::random(10) . '.sql';
         $encryptedFilename = Crypt::encryptString($filename);
-        $tables = DB::select('SHOW TABLES');
-        $altS3Enabled = config('porter.export_alt.enabled', false);
+        $tables            = DB::select('SHOW TABLES');
+        $altS3Enabled      = config('porter.export_alt.enabled', false);
 
         return ($this->isRemoteDisk() || $altS3Enabled)
             ? $this->handleRemoteExport($tables, $encryptedFilename, $dropIfExists, $altS3Enabled)
@@ -52,19 +55,19 @@ class ExportService
 
         $multipart = $client->createMultipartUpload([
             'Bucket' => $bucket,
-            'Key' => $encryptedFilename,
+            'Key'    => $encryptedFilename,
         ]);
 
         $tempStream = fopen('php://temp', 'r+');
         $this->writeInitialSQL($tempStream, $dropIfExists);
 
-        $uploadId = $multipart['UploadId'];
+        $uploadId   = $multipart['UploadId'];
         $partNumber = 1;
-        $parts = [];
+        $parts      = [];
         $bufferSize = $this->getOptimalBufferSize();
 
         foreach ($tables as $table) {
-            $tableName = array_values((array)$table)[0];
+            $tableName  = array_values((array)$table)[0];
             $modelClass = $this->getModelForTable($tableName);
 
             if (!$this->shouldProcessTable($modelClass)) {
@@ -73,7 +76,7 @@ class ExportService
 
             fwrite($tempStream, $this->exportTableSchema($tableName, $dropIfExists));
 
-            $this->processTableData($tableName, $modelClass, $tempStream, function() use ($client, $bucket, $encryptedFilename, $tempStream, $uploadId, &$partNumber, &$parts, $bufferSize) {
+            $this->processTableData($tableName, $modelClass, $tempStream, function () use ($client, $bucket, $encryptedFilename, $tempStream, $uploadId, &$partNumber, &$parts, $bufferSize) {
                 if (ftell($tempStream) >= $bufferSize) {
                     $this->flushToS3($client, $bucket, $encryptedFilename, $tempStream, $uploadId, $partNumber++, $parts);
                 }
@@ -87,9 +90,9 @@ class ExportService
         }
 
         $client->completeMultipartUpload([
-            'Bucket' => $bucket,
-            'Key' => $encryptedFilename,
-            'UploadId' => $uploadId,
+            'Bucket'          => $bucket,
+            'Key'             => $encryptedFilename,
+            'UploadId'        => $uploadId,
             'MultipartUpload' => ['Parts' => $parts],
         ]);
 
@@ -100,13 +103,13 @@ class ExportService
 
     protected function handleLocalExport($tables, $encryptedFilename, $dropIfExists)
     {
-        $filePath = storage_path("app/public/{$encryptedFilename}");
+        $filePath    = storage_path("app/public/{$encryptedFilename}");
         $localStream = fopen($filePath, 'w+');
 
         $this->writeInitialSQL($localStream, $dropIfExists);
 
         foreach ($tables as $table) {
-            $tableName = array_values((array)$table)[0];
+            $tableName  = array_values((array)$table)[0];
             $modelClass = $this->getModelForTable($tableName);
 
             if (!$this->shouldProcessTable($modelClass)) {
@@ -141,6 +144,7 @@ class ExportService
             foreach ($indexes as $index) {
                 if ($index->Key_name === 'PRIMARY') {
                     $orderByColumn = $index->Column_name;
+
                     break;
                 }
             }
@@ -150,6 +154,7 @@ class ExportService
                 foreach ($indexes as $index) {
                     if ($index->Non_unique == 0) {
                         $orderByColumn = $index->Column_name;
+
                         break;
                     }
                 }
@@ -167,11 +172,14 @@ class ExportService
             $query->orderBy($orderByColumn);
         }
 
-        $query->chunk(1000, function($records) use ($tableName, $modelClass, $stream, $callback) {
+        $query->chunk(1000, function ($records) use ($tableName, $modelClass, $stream, $callback) {
             foreach ($records as $row) {
                 if ($modelClass) {
                     $row = $this->processRowWithModel($row, $modelClass);
-                    if ($row === null) continue;
+
+                    if ($row === null) {
+                        continue;
+                    }
                 }
 
                 fwrite($stream, $this->generateInsertStatement($tableName, (array)$row));
@@ -210,13 +218,14 @@ class ExportService
     protected function findModelForTable($tableName)
     {
         $namespace = app()->getNamespace();
-        $finder = new Finder();
+        $finder    = new Finder();
 
         foreach ($finder->files()->in(app_path('Models'))->name('*.php') as $file) {
             $class = $namespace . 'Models\\' . Str::replaceLast('.php', '', str_replace('/', '\\', $file->getRelativePathname()));
 
             if (class_exists($class)) {
                 $model = new $class();
+
                 if ($model->getTable() === $tableName) {
                     return $class;
                 }
@@ -229,16 +238,17 @@ class ExportService
     protected function generateInsertStatement($tableName, array $row)
     {
         $columns = implode('`, `', array_keys($row));
-        $values = implode(", ", array_map(function ($value) {
+        $values  = implode(", ", array_map(function ($value) {
             if (is_null($value)) {
                 return 'NULL';
             }
+
             // Properly escape special characters and quotes
             return "'" . str_replace(
-                    ["\\", "'", "\r", "\n"],
-                    ["\\\\", "\\'", "\\r", "\\n"],
-                    $value
-                ) . "'";
+                ["\\", "'", "\r", "\n"],
+                ["\\\\", "\\'", "\\r", "\\n"],
+                $value
+            ) . "'";
         }, array_values($row)));
 
         return "INSERT INTO `{$tableName}` (`{$columns}`) VALUES ({$values});\n";
@@ -247,10 +257,10 @@ class ExportService
     protected function getS3Client($altS3Enabled)
     {
         $config = [
-            'version' => 'latest',
-            'region' => $altS3Enabled ? config('porter.export_alt.region') : config('filesystems.disks.s3.region'),
+            'version'     => 'latest',
+            'region'      => $altS3Enabled ? config('porter.export_alt.region') : config('filesystems.disks.s3.region'),
             'credentials' => [
-                'key' => $altS3Enabled ? config('porter.export_alt.access_key') : config('filesystems.disks.s3.key'),
+                'key'    => $altS3Enabled ? config('porter.export_alt.access_key') : config('filesystems.disks.s3.key'),
                 'secret' => $altS3Enabled ? config('porter.export_alt.secret_key') : config('filesystems.disks.s3.secret'),
             ],
             'use_path_style_endpoint' => $altS3Enabled ? config('porter.export_alt.use_path_style_endpoint') : config('filesystems.disks.s3.use_path_style_endpoint', false),
@@ -266,6 +276,7 @@ class ExportService
     protected function writeInitialSQL($stream, $dropIfExists)
     {
         fwrite($stream, "SET FOREIGN_KEY_CHECKS=0;\n");
+
         if ($dropIfExists) {
             fwrite($stream, "-- Adding DROP IF EXISTS for each table\n");
         }
@@ -275,16 +286,16 @@ class ExportService
     {
         rewind($tempStream);
         $result = $client->uploadPart([
-            'Bucket' => $bucket,
-            'Key' => $key,
-            'UploadId' => $uploadId,
+            'Bucket'     => $bucket,
+            'Key'        => $key,
+            'UploadId'   => $uploadId,
             'PartNumber' => $partNumber,
-            'Body' => stream_get_contents($tempStream),
+            'Body'       => stream_get_contents($tempStream),
         ]);
 
         $parts[] = [
             'PartNumber' => $partNumber,
-            'ETag' => $result['ETag'],
+            'ETag'       => $result['ETag'],
         ];
 
         ftruncate($tempStream, 0);
@@ -299,24 +310,30 @@ class ExportService
     protected function exportTableSchema($tableName, $dropIfExists)
     {
         $schema = "-- Exporting schema for table: {$tableName}\n";
+
         if ($dropIfExists) {
             $schema .= "DROP TABLE IF EXISTS `{$tableName}`;\n";
         }
+
         return $schema . DB::select("SHOW CREATE TABLE {$tableName}")[0]->{'Create Table'} . ";\n\n";
     }
 
     protected function generatePresignedUrl($client, $bucket, $key, $altS3Enabled)
     {
         $expiration = $altS3Enabled ? config('porter.export.expiration', 3600) : config('filesystems.disks.s3.expiration', 3600);
-        $cmd = $client->getCommand('GetObject', ['Bucket' => $bucket, 'Key' => $key]);
-        $request = $client->createPresignedRequest($cmd, '+' . $expiration . ' seconds');
+        $cmd        = $client->getCommand('GetObject', ['Bucket' => $bucket, 'Key' => $key]);
+        $request    = $client->createPresignedRequest($cmd, '+' . $expiration . ' seconds');
+
         return (string)$request->getUri();
     }
 
     protected function shouldProcessTable($modelClass)
     {
-        if (!$modelClass) return true;
+        if (!$modelClass) {
+            return true;
+        }
         $model = new $modelClass();
+
         return !(method_exists($model, 'porterShouldIgnoreModel') && $model->porterShouldIgnoreModel());
     }
 }
