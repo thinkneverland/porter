@@ -4,376 +4,319 @@ namespace ThinkNeverland\Porter\Services;
 
 use Aws\S3\S3Client;
 use Faker\Factory as Faker;
-use Illuminate\Support\Facades\{Crypt, DB, Storage};
+use Illuminate\Support\Facades\{Crypt, DB, Schema, Storage};
 use Illuminate\Support\Str;
 use Symfony\Component\Finder\Finder;
 
 class ExportService
 {
-    /**
-     * Export the database to a file, optionally uploading to S3.
-     *
-     * @param bool $dropIfExists Whether to drop tables if they exist.
-     * @param bool $noExpiration Whether the export link should have no expiration.
-     * @return string The URL of the exported file.
-     */
-    public function exportDatabase($dropIfExists, $noExpiration)
+    private $modelCache = [];
+    private static $fakerInstance = null;
+
+    protected function getFaker()
     {
-        $faker = Faker::create();
-        $disk  = Storage::disk(config('filesystems.default'));
+        return self::$fakerInstance ??= Faker::create();
+    }
 
-        // Generate a random filename for the export
-        $filename          = 'export_' . Str::random(10) . '.sql';
+    protected function getOptimalBufferSize()
+    {
+        $memoryLimit = ini_get('memory_limit');
+        $value = (int)$memoryLimit;
+        $unit = strtolower(substr($memoryLimit, -1));
+
+        switch ($unit) {
+            case 'g': $value *= 1024;
+            case 'm': $value *= 1024;
+            case 'k': $value *= 1024;
+        }
+
+        return min(10 * 1024 * 1024, $value / 10);
+    }
+
+    public function exportDatabase($dropIfExists)
+    {
+        $filename = 'export_' . Str::random(10) . '.sql';
         $encryptedFilename = Crypt::encryptString($filename);
-
-        // Retrieve all tables in the database
         $tables = DB::select('SHOW TABLES');
-
-        // Configuration for alternative S3
         $altS3Enabled = config('porter.export_alt.enabled', false);
 
-        // Check if the storage is remote (S3) or alternative S3 is enabled
-        if ($this->isRemoteDisk() || $altS3Enabled) {
-            // Configure S3 client
-            $clientConfig = [
-                'version'     => 'latest',
-                'region'      => $altS3Enabled ? config('porter.export_alt.region') : config('filesystems.disks.s3.region'),
-                'credentials' => [
-                    'key'    => $altS3Enabled ? config('porter.export_alt.access_key') : config('filesystems.disks.s3.key'),
-                    'secret' => $altS3Enabled ? config('porter.export_alt.secret_key') : config('filesystems.disks.s3.secret'),
-                ],
-                'use_path_style_endpoint' => $altS3Enabled ? config('porter.export_alt.use_path_style_endpoint') : config('filesystems.disks.s3.use_path_style_endpoint', false),
-            ];
+        return ($this->isRemoteDisk() || $altS3Enabled)
+            ? $this->handleRemoteExport($tables, $encryptedFilename, $dropIfExists, $altS3Enabled)
+            : $this->handleLocalExport($tables, $encryptedFilename, $dropIfExists);
+    }
 
-            // Set endpoint if specified
-            $endpoint = $altS3Enabled ? config('porter.export_alt.endpoint') : config('filesystems.disks.s3.endpoint', null);
-            if ($endpoint) {
-                $clientConfig['endpoint'] = $endpoint;
+    protected function handleRemoteExport($tables, $encryptedFilename, $dropIfExists, $altS3Enabled)
+    {
+        $client = $this->getS3Client($altS3Enabled);
+        $bucket = $altS3Enabled ? config('porter.export_alt.bucket') : config('filesystems.disks.s3.bucket');
+
+        $multipart = $client->createMultipartUpload([
+            'Bucket' => $bucket,
+            'Key' => $encryptedFilename,
+        ]);
+
+        $tempStream = fopen('php://temp', 'r+');
+        $this->writeInitialSQL($tempStream, $dropIfExists);
+
+        $uploadId = $multipart['UploadId'];
+        $partNumber = 1;
+        $parts = [];
+        $bufferSize = $this->getOptimalBufferSize();
+
+        foreach ($tables as $table) {
+            $tableName = array_values((array)$table)[0];
+            $modelClass = $this->getModelForTable($tableName);
+
+            if (!$this->shouldProcessTable($modelClass)) {
+                continue;
             }
 
-            // Initialize S3 client
-            $client = new S3Client($clientConfig);
-            $bucket = $altS3Enabled ? config('porter.export_alt.bucket') : config('filesystems.disks.s3.bucket');
-            $key    = $encryptedFilename;
+            fwrite($tempStream, $this->exportTableSchema($tableName, $dropIfExists));
 
-            // Use multipart upload for S3
-            $multipart = $client->createMultipartUpload([
-                'Bucket' => $bucket,
-                'Key'    => $key,
-            ]);
-
-            $uploadId   = $multipart['UploadId'];
-            $partNumber = 1;
-            $parts      = [];
-            $bufferSize = 5 * 1024 * 1024; // 5 MB buffer size
-            $tempStream = fopen('php://temp', 'r+');
-
-            // Disable foreign key checks for export
-            fwrite($tempStream, "SET FOREIGN_KEY_CHECKS=0;\n");
-
-            if ($dropIfExists) {
-                fwrite($tempStream, "-- Add DROP IF EXISTS for each table.\n");
-            }
-
-            // Iterate over each table and export schema and data
-            foreach ($tables as $table) {
-                $tableName  = array_values((array)$table)[0];
-                $modelClass = $this->getModelForTable($tableName);
-
-                // Write the table schema
-                fwrite($tempStream, $this->exportTableSchema($tableName, $dropIfExists));
-
-                // Skip data generation if the model should be ignored
-                if ($modelClass && $this->shouldIgnoreModel($modelClass)) {
-                    continue;
+            $this->processTableData($tableName, $modelClass, $tempStream, function() use ($client, $bucket, $encryptedFilename, $tempStream, $uploadId, &$partNumber, &$parts, $bufferSize) {
+                if (ftell($tempStream) >= $bufferSize) {
+                    $this->flushToS3($client, $bucket, $encryptedFilename, $tempStream, $uploadId, $partNumber++, $parts);
                 }
+            });
+        }
 
-                // Generate and write data for the table
-                $dataGenerator = $this->getTableDataGenerator($tableName, $modelClass);
-                foreach ($dataGenerator as $row) {
-                    fwrite($tempStream, $row);
+        fwrite($tempStream, "SET FOREIGN_KEY_CHECKS=1;\n");
 
-                    // Flush to S3 if buffer size is exceeded
-                    if (ftell($tempStream) >= $bufferSize) {
-                        $this->flushToS3($client, $bucket, $key, $tempStream, $uploadId, $partNumber++, $parts);
+        if (ftell($tempStream) > 0) {
+            $this->flushToS3($client, $bucket, $encryptedFilename, $tempStream, $uploadId, $partNumber++, $parts);
+        }
+
+        $client->completeMultipartUpload([
+            'Bucket' => $bucket,
+            'Key' => $encryptedFilename,
+            'UploadId' => $uploadId,
+            'MultipartUpload' => ['Parts' => $parts],
+        ]);
+
+        fclose($tempStream);
+
+        return $this->generatePresignedUrl($client, $bucket, $encryptedFilename, $altS3Enabled);
+    }
+
+    protected function handleLocalExport($tables, $encryptedFilename, $dropIfExists)
+    {
+        $filePath = storage_path("app/public/{$encryptedFilename}");
+        $localStream = fopen($filePath, 'w+');
+
+        $this->writeInitialSQL($localStream, $dropIfExists);
+
+        foreach ($tables as $table) {
+            $tableName = array_values((array)$table)[0];
+            $modelClass = $this->getModelForTable($tableName);
+
+            if (!$this->shouldProcessTable($modelClass)) {
+                continue;
+            }
+
+            fwrite($localStream, $this->exportTableSchema($tableName, $dropIfExists));
+            $this->processTableData($tableName, $modelClass, $localStream);
+        }
+
+        fwrite($localStream, "SET FOREIGN_KEY_CHECKS=1;\n");
+        fclose($localStream);
+
+        return asset("storage/{$encryptedFilename}");
+    }
+
+    protected function processTableData($tableName, $modelClass, $stream, $callback = null)
+    {
+        $query = DB::table($tableName);
+
+        // Get indexed columns using raw query
+        $indexes = DB::select("SHOW INDEX FROM `{$tableName}`");
+
+        // Try to find a suitable ordering column
+        $orderByColumn = null;
+
+        // First check for id column
+        if (Schema::hasColumn($tableName, 'id')) {
+            $orderByColumn = 'id';
+        } else {
+            // Look for primary key first
+            foreach ($indexes as $index) {
+                if ($index->Key_name === 'PRIMARY') {
+                    $orderByColumn = $index->Column_name;
+                    break;
+                }
+            }
+
+            // If no primary key, look for first unique index
+            if (!$orderByColumn) {
+                foreach ($indexes as $index) {
+                    if ($index->Non_unique == 0) {
+                        $orderByColumn = $index->Column_name;
+                        break;
                     }
                 }
             }
 
-            // Final flush to S3 for any remaining data
-            if (ftell($tempStream) > 0) {
-                $this->flushToS3($client, $bucket, $key, $tempStream, $uploadId, $partNumber++, $parts);
-            }
-
-            // Re-enable foreign key checks
-            fwrite($tempStream, "SET FOREIGN_KEY_CHECKS=1;\n");
-
-            // Complete the multipart upload
-            $client->completeMultipartUpload([
-                'Bucket'          => $bucket,
-                'Key'             => $key,
-                'UploadId'        => $uploadId,
-                'MultipartUpload' => ['Parts' => $parts],
-            ]);
-
-            fclose($tempStream);
-
-            // Generate a presigned URL for the uploaded file
-            $expiration = $altS3Enabled ? config('export.aws_expiration', 3600) : config('filesystems.disks.s3.expiration', 3600);
-            $cmd        = $client->getCommand('GetObject', [
-                'Bucket' => $bucket,
-                'Key'    => $key,
-            ]);
-
-            $request = $client->createPresignedRequest($cmd, '+' . $expiration . ' seconds');
-            $url     = (string) $request->getUri();
-
-            return $url;
-        } else {
-            // Local storage
-            $filePath    = storage_path("app/public/{$encryptedFilename}");
-            $localStream = fopen($filePath, 'w+');
-
-            fwrite($localStream, "SET FOREIGN_KEY_CHECKS=0;\n");
-
-            if ($dropIfExists) {
-                fwrite($localStream, "-- Add DROP IF EXISTS for each table.\n");
-            }
-
-            foreach ($tables as $table) {
-                $tableName  = array_values((array)$table)[0];
-                $modelClass = $this->getModelForTable($tableName);
-
-                // Write the table schema
-                fwrite($localStream, $this->exportTableSchema($tableName, $dropIfExists));
-
-                // Skip data generation if the model should be ignored
-                if ($modelClass && $this->shouldIgnoreModel($modelClass)) {
-                    continue;
+            // Last resort - use first indexed column
+            if (!$orderByColumn) {
+                if (!empty($indexes)) {
+                    $orderByColumn = $indexes[0]->Column_name;
                 }
-
-                // Generate and write data for the table
-                $dataGenerator = $this->getTableDataGenerator($tableName, $modelClass);
-                foreach ($dataGenerator as $row) {
-                    fwrite($localStream, $row);
-                }
-            }
-
-            fwrite($localStream, "SET FOREIGN_KEY_CHECKS=1;\n");
-
-            fclose($localStream);
-
-            return asset("storage/{$encryptedFilename}");
-        }
-    }
-
-    /**
-     * Flush the contents of the temporary stream to S3.
-     *
-     * @param S3Client $client The S3 client.
-     * @param string $bucket The S3 bucket name.
-     * @param string $key The S3 object key.
-     * @param resource $tempStream The temporary stream.
-     * @param string $uploadId The multipart upload ID.
-     * @param int $partNumber The part number.
-     * @param array &$parts The array of uploaded parts.
-     */
-    protected function flushToS3($client, $bucket, $key, $tempStream, $uploadId, $partNumber, &$parts)
-    {
-        rewind($tempStream);
-
-        // Upload the current part to S3
-        $result = $client->uploadPart([
-            'Bucket'     => $bucket,
-            'Key'        => $key,
-            'UploadId'   => $uploadId,
-            'PartNumber' => $partNumber,
-            'Body'       => stream_get_contents($tempStream),
-        ]);
-
-        // Store the part information for completing the upload
-        $parts[] = [
-            'PartNumber' => $partNumber,
-            'ETag'       => $result['ETag'],
-        ];
-
-        // Clear the temporary stream for the next part
-        ftruncate($tempStream, 0);
-        rewind($tempStream);
-    }
-
-    /**
-     * Check if the current storage disk is remote (S3).
-     *
-     * @return bool True if the disk is remote, false otherwise.
-     */
-    protected function isRemoteDisk()
-    {
-        return config('filesystems.default') === 's3';
-    }
-
-    /**
-     * Export the schema for a given table.
-     *
-     * @param string $tableName The name of the table.
-     * @param bool $dropIfExists Whether to include DROP TABLE IF EXISTS.
-     * @return string The SQL schema for the table.
-     */
-    protected function exportTableSchema($tableName, $dropIfExists)
-    {
-        $schema = "-- Exporting schema for table: {$tableName}\n";
-
-        if ($dropIfExists) {
-            $schema .= "DROP TABLE IF EXISTS `{$tableName}`;\n";
-        }
-
-        // Retrieve the CREATE TABLE statement for the table
-        $createTableQuery = DB::select("SHOW CREATE TABLE {$tableName}")[0]->{'Create Table'};
-        $schema .= "{$createTableQuery};\n\n";
-
-        return $schema;
-    }
-
-    /**
-     * Get a generator for the data of a given table.
-     *
-     * @param string $tableName The name of the table.
-     * @param string|null $modelClass The model class associated with the table.
-     * @return \Generator A generator yielding SQL insert statements.
-     */
-    protected function getTableDataGenerator($tableName, $modelClass)
-    {
-        // Use a cursor to iterate over the table data
-        $data = DB::table($tableName)->cursor();
-
-        foreach ($data as $row) {
-            if ($modelClass) {
-                $modelInstance = new $modelClass();
-
-                // Check if the model should ignore this row
-                if (method_exists($modelInstance, 'porterShouldIgnoreModel') && $modelInstance->porterShouldIgnoreModel()) {
-                    continue;
-                }
-
-                // Check if the row should be kept as is
-                if (method_exists($modelInstance, 'porterShouldKeepRow') && $modelInstance->porterShouldKeepRow((array) $row)) {
-                    yield $this->generateInsertStatement($tableName, (array) $row);
-                    continue;
-                }
-
-                // Randomize the row if applicable
-                if (method_exists($modelInstance, 'porterRandomizeRow')) {
-                    $row = $modelInstance->porterRandomizeRow((array) $row);
-                }
-            }
-
-            // Generate and yield the SQL insert statement for the row
-            yield $this->generateInsertStatement($tableName, (array) $row);
-        }
-    }
-
-    /**
-     * Generate an SQL insert statement for a given row of data.
-     *
-     * @param string $tableName The name of the table.
-     * @param array $row The row of data.
-     * @return string The SQL insert statement.
-     */
-    protected function generateInsertStatement($tableName, array $row)
-    {
-        $columns = implode('`, `', array_keys($row));
-
-        // Get nullable columns for the table
-        $nullableColumns = $this->getNullableColumns($tableName);
-
-        // Map values, setting empty values to NULL if the column is nullable
-        $values = implode(", ", array_map(function ($column, $value) use ($nullableColumns) {
-            if (is_null($value) || ($value === '' && in_array($column, $nullableColumns))) {
-                return 'NULL';
-            }
-
-            return "'" . addslashes($value) . "'";
-        }, array_keys($row), array_values($row)));
-
-        return "INSERT INTO `{$tableName}` (`{$columns}`) VALUES ({$values});\n";
-    }
-
-    /**
-     * Get nullable columns for a given table.
-     *
-     * @param string $tableName The name of the table.
-     * @return array An array of nullable column names.
-     */
-    protected function getNullableColumns($tableName)
-    {
-        $columns         = DB::select("SHOW COLUMNS FROM {$tableName}");
-        $nullableColumns = [];
-
-        foreach ($columns as $column) {
-            if ($column->Null === 'YES') {
-                $nullableColumns[] = $column->Field;
             }
         }
 
-        return $nullableColumns;
+        if ($orderByColumn) {
+            $query->orderBy($orderByColumn);
+        }
+
+        $query->chunk(1000, function($records) use ($tableName, $modelClass, $stream, $callback) {
+            foreach ($records as $row) {
+                if ($modelClass) {
+                    $row = $this->processRowWithModel($row, $modelClass);
+                    if ($row === null) continue;
+                }
+
+                fwrite($stream, $this->generateInsertStatement($tableName, (array)$row));
+
+                if ($callback) {
+                    $callback();
+                }
+            }
+        });
     }
 
-    /**
-     * Get the model class associated with a given table.
-     *
-     * @param string $tableName The name of the table.
-     * @return string|null The model class name, or null if not found.
-     */
+    protected function processRowWithModel($row, $modelClass)
+    {
+        $modelInstance = new $modelClass();
+
+        if (method_exists($modelInstance, 'porterShouldIgnoreModel') && $modelInstance->porterShouldIgnoreModel()) {
+            return null;
+        }
+
+        if (method_exists($modelInstance, 'porterShouldKeepRow') && $modelInstance->porterShouldKeepRow((array)$row)) {
+            return $row;
+        }
+
+        if (method_exists($modelInstance, 'porterRandomizeRow')) {
+            return $modelInstance->porterRandomizeRow((array)$row);
+        }
+
+        return $row;
+    }
+
     protected function getModelForTable($tableName)
     {
-        $models = $this->getAllModels();
+        return $this->modelCache[$tableName] ??= $this->findModelForTable($tableName);
+    }
 
-        foreach ($models as $modelClass) {
-            $model = new $modelClass();
+    protected function findModelForTable($tableName)
+    {
+        $namespace = app()->getNamespace();
+        $finder = new Finder();
 
-            if ($model->getTable() === $tableName) {
-                return $modelClass;
+        foreach ($finder->files()->in(app_path('Models'))->name('*.php') as $file) {
+            $class = $namespace . 'Models\\' . Str::replaceLast('.php', '', str_replace('/', '\\', $file->getRelativePathname()));
+
+            if (class_exists($class)) {
+                $model = new $class();
+                if ($model->getTable() === $tableName) {
+                    return $class;
+                }
             }
         }
 
         return null;
     }
 
-    /**
-     * Get all model classes in the application.
-     *
-     * @return array An array of model class names.
-     */
-    protected function getAllModels()
+    protected function generateInsertStatement($tableName, array $row)
     {
-        $models    = [];
-        $namespace = app()->getNamespace();
-        $modelPath = app_path('Models');
-
-        $finder = new Finder();
-
-        foreach ($finder->files()->in($modelPath)->name('*.php') as $file) {
-            $relativePath = str_replace('/', '\\', $file->getRelativePathname());
-            $class        = $namespace . 'Models\\' . Str::replaceLast('.php', '', $relativePath);
-
-            if (class_exists($class)) {
-                $models[] = $class;
+        $columns = implode('`, `', array_keys($row));
+        $values = implode(", ", array_map(function ($value) {
+            if (is_null($value)) {
+                return 'NULL';
             }
-        }
+            // Properly escape special characters and quotes
+            return "'" . str_replace(
+                    ["\\", "'", "\r", "\n"],
+                    ["\\\\", "\\'", "\\r", "\\n"],
+                    $value
+                ) . "'";
+        }, array_values($row)));
 
-        return $models;
+        return "INSERT INTO `{$tableName}` (`{$columns}`) VALUES ({$values});\n";
     }
 
-    /**
-     * Determine if a model should be ignored during export.
-     *
-     * @param string $modelClass The model class name.
-     * @return bool True if the model should be ignored, false otherwise.
-     */
-    protected function shouldIgnoreModel($modelClass)
+    protected function getS3Client($altS3Enabled)
     {
-        $modelInstance = new $modelClass();
+        $config = [
+            'version' => 'latest',
+            'region' => $altS3Enabled ? config('porter.export_alt.region') : config('filesystems.disks.s3.region'),
+            'credentials' => [
+                'key' => $altS3Enabled ? config('porter.export_alt.access_key') : config('filesystems.disks.s3.key'),
+                'secret' => $altS3Enabled ? config('porter.export_alt.secret_key') : config('filesystems.disks.s3.secret'),
+            ],
+            'use_path_style_endpoint' => $altS3Enabled ? config('porter.export_alt.use_path_style_endpoint') : config('filesystems.disks.s3.use_path_style_endpoint', false),
+        ];
 
-        return method_exists($modelInstance, 'porterShouldIgnoreModel') && $modelInstance->porterShouldIgnoreModel();
+        if ($endpoint = $altS3Enabled ? config('porter.export_alt.endpoint') : config('filesystems.disks.s3.endpoint', null)) {
+            $config['endpoint'] = $endpoint;
+        }
+
+        return new S3Client($config);
+    }
+
+    protected function writeInitialSQL($stream, $dropIfExists)
+    {
+        fwrite($stream, "SET FOREIGN_KEY_CHECKS=0;\n");
+        if ($dropIfExists) {
+            fwrite($stream, "-- Adding DROP IF EXISTS for each table\n");
+        }
+    }
+
+    protected function flushToS3($client, $bucket, $key, $tempStream, $uploadId, $partNumber, &$parts)
+    {
+        rewind($tempStream);
+        $result = $client->uploadPart([
+            'Bucket' => $bucket,
+            'Key' => $key,
+            'UploadId' => $uploadId,
+            'PartNumber' => $partNumber,
+            'Body' => stream_get_contents($tempStream),
+        ]);
+
+        $parts[] = [
+            'PartNumber' => $partNumber,
+            'ETag' => $result['ETag'],
+        ];
+
+        ftruncate($tempStream, 0);
+        rewind($tempStream);
+    }
+
+    protected function isRemoteDisk()
+    {
+        return config('filesystems.default') === 's3';
+    }
+
+    protected function exportTableSchema($tableName, $dropIfExists)
+    {
+        $schema = "-- Exporting schema for table: {$tableName}\n";
+        if ($dropIfExists) {
+            $schema .= "DROP TABLE IF EXISTS `{$tableName}`;\n";
+        }
+        return $schema . DB::select("SHOW CREATE TABLE {$tableName}")[0]->{'Create Table'} . ";\n\n";
+    }
+
+    protected function generatePresignedUrl($client, $bucket, $key, $altS3Enabled)
+    {
+        $expiration = $altS3Enabled ? config('porter.export.expiration', 3600) : config('filesystems.disks.s3.expiration', 3600);
+        $cmd = $client->getCommand('GetObject', ['Bucket' => $bucket, 'Key' => $key]);
+        $request = $client->createPresignedRequest($cmd, '+' . $expiration . ' seconds');
+        return (string)$request->getUri();
+    }
+
+    protected function shouldProcessTable($modelClass)
+    {
+        if (!$modelClass) return true;
+        $model = new $modelClass();
+        return !(method_exists($model, 'porterShouldIgnoreModel') && $model->porterShouldIgnoreModel());
     }
 }

@@ -6,65 +6,113 @@ use Faker\Factory as Faker;
 
 trait PorterConfigurable
 {
+    private static $fakerInstance = null;
+    private $columnTypeCache = [];
+
     /**
-     * Randomize the given row's data based on the model's settings.
-     *
-     * This method iterates over each column in the provided row and checks if the column
-     * is listed in the model's `omittedFromPorter` configuration. If it is, the column's
-     * value is randomized using Faker based on the column name and data type.
-     *
-     * @param array $row The row of data.
-     * @return array The modified row with randomized data.
+     * Get or create Faker instance
      */
-    public function porterRandomizeRow(array $row)
+    protected function getFaker()
     {
-        $faker = Faker::create();
+        if (self::$fakerInstance === null) {
+            self::$fakerInstance = Faker::create();
+        }
+        return self::$fakerInstance;
+    }
 
-        // Retrieve the list of columns to be randomized from the model's configuration
-        $omittedColumns = $this->getPorterConfig('omittedFromPorter', []);
+    /**
+     * Get column type with caching
+     */
+    protected function getColumnType($columnName)
+    {
+        if (!isset($this->columnTypeCache[$columnName])) {
+            $type = $this->determineColumnType($columnName);
+            $this->columnTypeCache[$columnName] = $type;
+        }
 
-        // Iterate over each column in the row
-        foreach ($row as $key => $value) {
-            // Check if the column should be randomized
-            if (in_array($key, $omittedColumns)) {
-                // Randomize the column value based on common column names and data types
-                if (stripos($key, 'email') !== false) {
-                    $row[$key] = $faker->safeEmail;
-                } elseif (stripos($key, 'name') !== false) {
-                    $row[$key] = $faker->name;
-                } elseif (stripos($key, 'user') !== false) {
-                    $row[$key] = $faker->userName;
-                } elseif (stripos($key, 'phone') !== false) {
-                    $row[$key] = $faker->phoneNumber;
-                } elseif (stripos($key, 'address') !== false) {
-                    $row[$key] = $faker->address;
-                } elseif (stripos($key, 'city') !== false) {
-                    $row[$key] = $faker->city;
-                } elseif (stripos($key, 'country') !== false) {
-                    $row[$key] = $faker->country;
-                } elseif (stripos($key, 'date') !== false) {
-                    $row[$key] = $faker->date;
-                } elseif (stripos($key, 'url') !== false || stripos($key, 'link') !== false) {
-                    $row[$key] = $faker->url;
-                } elseif (stripos($key, 'password') !== false) {
-                    $row[$key] = $faker->regexify('[A-Za-z0-9]{16,}'); // At least 16 characters
-                } elseif (stripos($key, 'token') !== false) {
-                    $row[$key] = $faker->sha256; // Use a valid token length
-                } elseif (is_int($value)) {
-                    $row[$key] = $faker->randomNumber();
-                } elseif (is_float($value)) {
-                    $row[$key] = $faker->randomFloat(2, 0, 1000);
-                } elseif (is_bool($value)) {
-                    $row[$key] = $faker->boolean;
-                } elseif (is_string($value)) {
-                    $row[$key] = $faker->word;
-                } else {
-                    $row[$key] = $faker->text;
-                }
+        return $this->columnTypeCache[$columnName];
+    }
+
+    /**
+     * Determine column type based on name
+     */
+    protected function determineColumnType($columnName)
+    {
+        $types = [
+            'email' => 'email',
+            'name' => 'name',
+            'phone' => 'phone',
+            'address' => 'address',
+            'city' => 'city',
+            'country' => 'country',
+            'date' => 'date',
+            'url' => 'url',
+            'link' => 'url',
+            'password' => 'password',
+            'token' => 'token'
+        ];
+
+        foreach ($types as $key => $type) {
+            if (stripos($columnName, $key) !== false) {
+                return $type;
             }
         }
 
+        return 'string';
+    }
+
+    /**
+     * Optimized randomize row method
+     */
+    public function porterRandomizeRow(array $row)
+    {
+        $faker = $this->getFaker();
+        $omittedColumns = $this->getPorterConfig('omittedFromPorter', []);
+
+        foreach ($row as $key => $value) {
+            if (!in_array($key, $omittedColumns)) {
+                continue;
+            }
+
+            $type = $this->getColumnType($key);
+            $row[$key] = $this->generateFakeValue($type, $value, $faker);
+        }
+
         return $row;
+    }
+
+    /**
+     * Generate fake value based on type
+     */
+    protected function generateFakeValue($type, $value, $faker)
+    {
+        switch ($type) {
+            case 'email': return $faker->safeEmail;
+            case 'name': return $faker->name;
+            case 'phone': return $faker->phoneNumber;
+            case 'address': return $faker->address;
+            case 'city': return $faker->city;
+            case 'country': return $faker->country;
+            case 'date': return $faker->date;
+            case 'url': return $faker->url;
+            case 'password': return $faker->regexify('[A-Za-z0-9]{16,}');
+            case 'token': return $faker->sha256;
+            default: return $this->generateDefaultValue($value, $faker);
+        }
+    }
+
+    /**
+     * Generate default value based on type
+     */
+    protected function generateDefaultValue($value, $faker)
+    {
+        switch (gettype($value)) {
+            case 'integer': return $faker->randomNumber();
+            case 'double': return $faker->randomFloat(2, 0, 1000);
+            case 'boolean': return $faker->boolean;
+            case 'string': return $faker->word;
+            default: return $faker->text;
+        }
     }
 
     /**
