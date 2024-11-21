@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\DB;
 class ImportCommand extends Command
 {
     protected $signature = 'porter:import {file}';
+
     protected $description = 'Import a SQL file into the database';
 
     /**
@@ -18,7 +19,7 @@ class ImportCommand extends Command
 
     public function handle()
     {
-        $file = $this->argument('file');
+        $file     = $this->argument('file');
         $filePath = $this->resolvePath($file);
 
         if (!$this->validateFile($filePath)) {
@@ -28,9 +29,11 @@ class ImportCommand extends Command
         try {
             $this->streamImport($filePath);
             $this->info('Database imported successfully!');
+
             return 0;
         } catch (QueryException $e) {
             $this->error('Failed to import database: ' . $e->getMessage());
+
             return 1;
         }
     }
@@ -50,11 +53,13 @@ class ImportCommand extends Command
     {
         if (!file_exists($filePath)) {
             $this->error("File not found at {$filePath}");
+
             return false;
         }
 
         if (!is_readable($filePath)) {
             $this->error("File is not readable at {$filePath}");
+
             return false;
         }
 
@@ -66,10 +71,10 @@ class ImportCommand extends Command
      */
     protected function streamImport($filePath)
     {
-        $handle = fopen($filePath, 'r');
-        $query = '';
+        $handle    = fopen($filePath, 'r');
+        $query     = '';
         $delimiter = ';';
-        $fileSize = filesize($filePath);
+        $fileSize  = filesize($filePath);
 
         $this->output->progressStart($fileSize);
         $processedSize = 0;
@@ -82,7 +87,7 @@ class ImportCommand extends Command
             // Process complete queries in the buffer
             while (($queryEnd = strpos($query, $delimiter)) !== false) {
                 $sqlQuery = substr($query, 0, $queryEnd + 1);
-                $query = substr($query, $queryEnd + 1);
+                $query    = substr($query, $queryEnd + 1);
 
                 // Execute non-empty queries
                 if (trim($sqlQuery)) {
@@ -109,8 +114,9 @@ class ImportCommand extends Command
     {
         // Remove comments and empty lines
         $lines = explode("\n", $query);
-        $lines = array_filter($lines, function($line) {
+        $lines = array_filter($lines, function ($line) {
             $line = trim($line);
+
             return $line && !preg_match('/^--/', $line) && !preg_match('/^#/', $line);
         });
 

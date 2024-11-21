@@ -2,18 +2,22 @@
 
 namespace ThinkNeverland\Porter\Jobs;
 
+use Exception;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\{InteractsWithQueue, SerializesModels};
 use Illuminate\Support\Facades\Storage;
-use Exception;
 
 class DeleteFileAfterExpiration implements ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use Dispatchable;
+    use InteractsWithQueue;
+    use Queueable;
+    use SerializesModels;
 
     protected $filePath;
+
     protected $disk;
 
     /**
@@ -29,7 +33,7 @@ class DeleteFileAfterExpiration implements ShouldQueue
     public function __construct(string $filePath, string $disk)
     {
         $this->filePath = $filePath;
-        $this->disk = $disk;
+        $this->disk     = $disk;
     }
 
     /**
@@ -43,6 +47,7 @@ class DeleteFileAfterExpiration implements ShouldQueue
             // Check if file exists before attempting deletion
             if (!$storage->exists($this->filePath)) {
                 info("File already deleted or not found: {$this->filePath}");
+
                 return;
             }
 
@@ -52,9 +57,9 @@ class DeleteFileAfterExpiration implements ShouldQueue
             }
 
             info("Successfully deleted expired file: {$this->filePath}");
-
         } catch (Exception $e) {
             report($e);
+
             throw $e;
         }
     }
