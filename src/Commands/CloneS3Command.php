@@ -49,6 +49,10 @@ class CloneS3Command extends Command
 
             $this->info("\nS3 bucket cloning completed!");
 
+            // Clean up disk configurations here instead
+            config(['filesystems.disks.s3_source' => null]);
+            config(['filesystems.disks.s3_target' => null]);
+
             return 0;
         } catch (Exception $e) {
             $this->error("Fatal error during cloning operation: " . $e->getMessage());
@@ -334,15 +338,5 @@ class CloneS3Command extends Command
 
             throw $e;
         }
-    }
-
-    /**
-     * Clean up temporary storage configurations
-     */
-    public function __destruct()
-    {
-        // Clean up temporary disk configurations
-        config(['filesystems.disks.s3_source' => null]);
-        config(['filesystems.disks.s3_target' => null]);
     }
 }
