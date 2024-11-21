@@ -4,7 +4,7 @@ namespace ThinkNeverland\Porter\Services;
 
 use Aws\S3\S3Client;
 use Faker\Factory as Faker;
-use Illuminate\Support\Facades\{Crypt, DB, Schema, Storage};
+use Illuminate\Support\Facades\{Crypt, DB, Schema};
 use Illuminate\Support\Str;
 use Symfony\Component\Finder\Finder;
 
